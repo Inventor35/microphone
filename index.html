@@ -109,6 +109,28 @@
           </div>
           <div class="reticle" aria-hidden="true"></div>
           <div class="voice-stack" id="peerList"></div>
+          <div class="emoji-burst-layer" id="emojiBurstLayer" aria-hidden="true"></div>
+          <section class="public-chat" aria-label="房间公屏">
+            <div class="chat-head">
+              <strong>公屏</strong>
+              <span id="chatStatus">等待入房</span>
+            </div>
+            <div class="chat-messages" id="chatMessages" aria-live="polite"></div>
+            <div class="emoji-tray" aria-label="发送表情">
+              <button type="button" data-emoji="😂">😂</button>
+              <button type="button" data-emoji="🔥">🔥</button>
+              <button type="button" data-emoji="👍">👍</button>
+              <button type="button" data-emoji="🎯">🎯</button>
+              <button type="button" data-emoji="💀">💀</button>
+              <button type="button" data-emoji="👏">👏</button>
+              <button type="button" data-emoji="❤️">❤️</button>
+              <button type="button" data-emoji="😎">😎</button>
+            </div>
+            <form class="chat-form" id="chatForm">
+              <input id="chatInput" maxlength="240" autocomplete="off" placeholder="和队友说点什么" disabled />
+              <button type="submit" disabled>发送</button>
+            </form>
+          </section>
           <div class="hud bottom">
             <span id="connectionHint">创建房间后，邀请朋友打开链接加入。</span>
           </div>

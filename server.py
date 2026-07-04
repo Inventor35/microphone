@@ -23,6 +23,7 @@ DB_FILE = os.environ.get("PARTYLINK_DB", os.path.join(ROOT, "partylink.db"))
 SESSION_COOKIE = "partylink_session"
 SESSION_TTL = 60 * 60 * 24 * 30
 HASH_ITERATIONS = 210000
+ALLOWED_EMOJIS = {"😂", "🔥", "👍", "🎯", "💀", "👏", "❤️", "😮", "😎", "😭"}
 STATIC_FILES = {
     "/": "index.html",
     "/index.html": "index.html",
@@ -537,6 +538,7 @@ class Handler(BaseHTTPRequestHandler):
             peers = [public_peer(peer) for peer in room["peers"].values()]
             peer = {
                 "id": client_id,
+                "userId": user["id"],
                 "name": name,
                 "muted": False,
                 "deafened": False,
@@ -550,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"room": room_code, "clientId": client_id, "peers": peers})
 
     def handle_send(self):
-        if not self.require_user():
+        user = self.require_user()
+        if not user:
             return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
@@ -564,6 +567,25 @@ class Handler(BaseHTTPRequestHandler):
             if not room or sender not in room["peers"]:
                 self.send_json(404, {"error": "Room or sender not found"})
                 return
+            if room["peers"][sender].get("userId") != user["id"]:
+                self.send_json(403, {"error": "不能使用其他账号的房间连接"})
+                return
+
+            peer = room["peers"][sender]
+            if message_type == "chat":
+                text = str(payload.get("text", "")).strip()
+                if not text:
+                    self.send_json(400, {"error": "消息不能为空"})
+                    return
+                payload = {"text": text[:240], "name": peer["name"]}
+                target = None
+            elif message_type == "emoji":
+                emoji = str(payload.get("emoji", "")).strip()
+                if emoji not in ALLOWED_EMOJIS:
+                    self.send_json(400, {"error": "不支持这个表情"})
+                    return
+                payload = {"emoji": emoji, "name": peer["name"]}
+                target = None
 
             body = {"type": message_type, "from": sender, "payload": payload}
             if target:
@@ -575,7 +597,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
 
     def handle_state(self):
-        if not self.require_user():
+        user = self.require_user()
+        if not user:
             return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
@@ -585,6 +608,9 @@ class Handler(BaseHTTPRequestHandler):
             if not room or client_id not in room["peers"]:
                 self.send_json(404, {"error": "Room or peer not found"})
                 return
+            if room["peers"][client_id].get("userId") != user["id"]:
+                self.send_json(403, {"error": "不能修改其他账号的状态"})
+                return
             peer = room["peers"][client_id]
             peer["muted"] = bool(data.get("muted", False))
             peer["deafened"] = bool(data.get("deafened", False))
@@ -593,7 +619,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
 
     def handle_leave(self):
-        if not self.require_user():
+        user = self.require_user()
+        if not user:
             return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
@@ -601,6 +628,9 @@ class Handler(BaseHTTPRequestHandler):
         with condition:
             room = rooms.get(room_code)
             if room and client_id in room["peers"]:
+                if room["peers"][client_id].get("userId") != user["id"]:
+                    self.send_json(403, {"error": "不能移除其他账号的连接"})
+                    return
                 room["peers"].pop(client_id, None)
                 broadcast(room_code, {"type": "peer-left", "from": client_id}, exclude=client_id)
                 cleanup_room(room_code)
@@ -623,7 +653,8 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def handle_poll(self, parsed):
-        if not self.require_user():
+        user = self.require_user()
+        if not user:
             return
         query = urllib.parse.parse_qs(parsed.query)
         room_code = query.get("room", [""])[0].strip().upper()
@@ -637,6 +668,9 @@ class Handler(BaseHTTPRequestHandler):
                 peer = room["peers"].get(client_id) if room else None
                 if not peer:
                     self.send_json(404, {"error": "Room or peer not found"})
+                    return
+                if peer.get("userId") != user["id"]:
+                    self.send_json(403, {"error": "不能读取其他账号的房间消息"})
                     return
 
                 messages = [msg for msg in peer["messages"] if msg["seq"] > after]

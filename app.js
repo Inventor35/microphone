@@ -32,6 +32,12 @@ const accountAvatar = document.querySelector("#accountAvatar");
 const accountName = document.querySelector("#accountName");
 const accountUsername = document.querySelector("#accountUsername");
 const logoutBtn = document.querySelector("#logoutBtn");
+const chatMessages = document.querySelector("#chatMessages");
+const chatForm = document.querySelector("#chatForm");
+const chatInput = document.querySelector("#chatInput");
+const chatStatus = document.querySelector("#chatStatus");
+const emojiBurstLayer = document.querySelector("#emojiBurstLayer");
+const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 const rtcConfig = {
@@ -63,6 +69,7 @@ let noiseFloorDb = -64;
 let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
 let currentUser = null;
+let chatItems = [];
 const peers = new Map();
 
 const params = new URLSearchParams(window.location.search);
@@ -90,6 +97,57 @@ function setServerStatus(text, mode = "offline") {
 function setMicStatus(text, enabled = false) {
   micStatus.textContent = text;
   micDot.className = `dot ${enabled ? "mic" : ""}`;
+}
+
+function setChatEnabled(enabled) {
+  chatInput.disabled = !enabled;
+  chatForm.querySelector("button").disabled = !enabled;
+  emojiButtons.forEach((button) => {
+    button.disabled = !enabled;
+  });
+  chatStatus.textContent = enabled ? "房内可见" : "等待入房";
+}
+
+function peerName(peerId, fallback = "队友") {
+  if (peerId === state.clientId) return state.name || "你";
+  return peers.get(peerId)?.name || fallback;
+}
+
+function renderChat() {
+  chatMessages.textContent = "";
+  for (const item of chatItems.slice(-36)) {
+    const row = document.createElement("article");
+    row.className = `chat-row ${item.mine ? "mine" : ""} ${item.kind === "emoji" ? "emoji-row" : ""}`;
+
+    const meta = document.createElement("span");
+    meta.className = "chat-meta";
+    meta.textContent = item.mine ? "你" : item.name;
+
+    const body = document.createElement("p");
+    body.textContent = item.kind === "emoji" ? `${item.emoji}` : item.text;
+
+    row.append(meta, body);
+    chatMessages.appendChild(row);
+  }
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function addChatItem(item) {
+  chatItems.push({ id: `${Date.now()}-${Math.random()}`, ...item });
+  if (chatItems.length > 60) {
+    chatItems = chatItems.slice(-60);
+  }
+  renderChat();
+}
+
+function burstEmoji(emoji, mine = false) {
+  const node = document.createElement("div");
+  node.className = `emoji-burst ${mine ? "mine" : ""}`;
+  node.textContent = emoji;
+  node.style.left = `${18 + Math.random() * 58}%`;
+  node.style.animationDelay = `${Math.random() * 120}ms`;
+  emojiBurstLayer.appendChild(node);
+  window.setTimeout(() => node.remove(), 2300);
 }
 
 function localPeer() {
@@ -469,6 +527,49 @@ async function sendSignal(to, type, payload) {
   });
 }
 
+async function sendRoomEvent(type, payload) {
+  if (!state.joined) return;
+  await sendSignal(null, type, payload);
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  if (!state.joined) return;
+  const text = chatInput.value.trim();
+  if (!text) return;
+  const clipped = text.slice(0, 240);
+  chatInput.value = "";
+  addChatItem({ kind: "text", text: clipped, name: state.name, mine: true });
+  await sendRoomEvent("chat", { text: clipped, name: state.name }).catch(() => {
+    addChatItem({ kind: "text", text: "消息发送失败", name: "系统", mine: false });
+  });
+}
+
+async function sendEmoji(emoji) {
+  if (!state.joined) return;
+  addChatItem({ kind: "emoji", emoji, name: state.name, mine: true });
+  burstEmoji(emoji, true);
+  await sendRoomEvent("emoji", { emoji, name: state.name }).catch(() => {});
+}
+
+function handleRoomEvent(message) {
+  const payload = message.payload || {};
+  const name = peerName(message.from, payload.name || "队友");
+  if (message.type === "chat") {
+    const text = String(payload.text || "").trim();
+    if (text) {
+      addChatItem({ kind: "text", text, name, mine: message.from === state.clientId });
+    }
+  }
+  if (message.type === "emoji") {
+    const emoji = String(payload.emoji || "").trim();
+    if (emoji) {
+      addChatItem({ kind: "emoji", emoji, name, mine: message.from === state.clientId });
+      burstEmoji(emoji, message.from === state.clientId);
+    }
+  }
+}
+
 function createPeerConnection(peerId, polite) {
   const current = peers.get(peerId) || {};
   if (current.pc) return current.pc;
@@ -589,10 +690,15 @@ async function poll() {
         state.lastSeq = Math.max(state.lastSeq, message.seq);
         if (message.type === "peer-joined") {
           upsertPeerRecord(message.peer);
+          addChatItem({ kind: "text", text: `${message.peer.name} 加入了房间`, name: "系统", mine: false });
         } else if (message.type === "peer-left") {
+          const name = peerName(message.from);
           removePeer(message.from);
+          addChatItem({ kind: "text", text: `${name} 离开了房间`, name: "系统", mine: false });
         } else if (message.type === "peer-state") {
           upsertPeerRecord(message.peer);
+        } else if (message.type === "chat" || message.type === "emoji") {
+          handleRoomEvent(message);
         } else {
           await handleSignal(message);
         }
@@ -647,6 +753,9 @@ async function joinRoom(event) {
     muteBtn.disabled = false;
     deafenBtn.disabled = false;
     leaveBtn.disabled = false;
+    setChatEnabled(true);
+    chatItems = [];
+    addChatItem({ kind: "text", text: `${state.name} 进入了房间`, name: "系统", mine: false });
 
     upsertPeerRecord(localPeer());
     applyMuteState();
@@ -704,6 +813,10 @@ async function leaveRoom() {
   muteBtn.disabled = true;
   deafenBtn.disabled = true;
   leaveBtn.disabled = true;
+  setChatEnabled(false);
+  chatInput.value = "";
+  chatItems = [];
+  renderChat();
   setServerStatus("已离开房间", "offline");
   setMicStatus("麦克风未开启", false);
   connectionHint.textContent = "创建房间后，邀请朋友打开链接加入。";
@@ -740,6 +853,10 @@ leaveBtn.addEventListener("click", leaveRoom);
 outputVolume.addEventListener("input", applyOutputVolume);
 pttMode.addEventListener("change", applyMuteState);
 noiseToggle.addEventListener("change", applyNoiseConstraints);
+chatForm.addEventListener("submit", sendChatMessage);
+emojiButtons.forEach((button) => {
+  button.addEventListener("click", () => sendEmoji(button.dataset.emoji));
+});
 copyInviteBtn.addEventListener("click", async () => {
   await refreshInviteBaseUrl();
   const url = `${inviteBaseUrl}/?room=${encodeURIComponent(state.room)}`;
@@ -768,6 +885,8 @@ window.addEventListener("beforeunload", () => {
 });
 
 setCurrentUser(null);
+setChatEnabled(false);
 loadCurrentUser();
 refreshInviteBaseUrl();
 renderPeers();
+renderChat();
