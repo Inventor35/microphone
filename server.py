@@ -116,8 +116,29 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS friendships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_a_id INTEGER NOT NULL,
+                user_b_id INTEGER NOT NULL,
+                requester_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE (user_a_id, user_b_id),
+                CHECK (user_a_id < user_b_id),
+                FOREIGN KEY (user_a_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_b_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (requester_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_user_a ON friendships(user_a_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_user_b ON friendships(user_b_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status)")
 
 
 def normalize_username(username):
@@ -183,6 +204,79 @@ def delete_session(token):
         return
     with db_lock, db_connection() as conn:
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+
+
+def friendship_pair(first_id, second_id):
+    return (first_id, second_id) if first_id < second_id else (second_id, first_id)
+
+
+def online_user_ids():
+    with condition:
+        return {
+            peer.get("userId")
+            for room in rooms.values()
+            for peer in room["peers"].values()
+            if peer.get("userId")
+        }
+
+
+def friend_user_from_row(row, user_id, online_ids):
+    prefix = "a" if row["b_id"] == user_id else "b"
+    friend_id = row[f"{prefix}_id"]
+    return {
+        "friendshipId": row["id"],
+        "id": friend_id,
+        "username": row[f"{prefix}_username"],
+        "displayName": row[f"{prefix}_display_name"],
+        "online": friend_id in online_ids,
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def friend_data_for_user(user_id):
+    online_ids = online_user_ids()
+    with db_lock, db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT friendships.id,
+                   friendships.user_a_id,
+                   friendships.user_b_id,
+                   friendships.requester_id,
+                   friendships.status,
+                   friendships.created_at,
+                   friendships.updated_at,
+                   ua.id AS a_id,
+                   ua.username AS a_username,
+                   ua.display_name AS a_display_name,
+                   ub.id AS b_id,
+                   ub.username AS b_username,
+                   ub.display_name AS b_display_name
+            FROM friendships
+            JOIN users ua ON ua.id = friendships.user_a_id
+            JOIN users ub ON ub.id = friendships.user_b_id
+            WHERE friendships.user_a_id = ? OR friendships.user_b_id = ?
+            ORDER BY friendships.updated_at DESC
+            """,
+            (user_id, user_id),
+        ).fetchall()
+
+    friends = []
+    incoming = []
+    outgoing = []
+    for row in rows:
+        item = friend_user_from_row(row, user_id, online_ids)
+        if row["status"] == "accepted":
+            friends.append(item)
+        elif row["status"] == "pending" and row["requester_id"] == user_id:
+            outgoing.append(item)
+        elif row["status"] == "pending":
+            incoming.append(item)
+
+    friends.sort(key=lambda item: (not item["online"], item["displayName"].lower()))
+    incoming.sort(key=lambda item: item["updatedAt"], reverse=True)
+    outgoing.sort(key=lambda item: item["updatedAt"], reverse=True)
+    return {"friends": friends, "incoming": incoming, "outgoing": outgoing}
 
 
 def local_ipv4_addresses():
@@ -414,6 +508,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/me":
             self.handle_me()
             return
+        if parsed.path == "/api/friends":
+            self.handle_friends()
+            return
 
         filename = STATIC_FILES.get(parsed.path)
         if not filename:
@@ -444,6 +541,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_login()
             elif parsed.path == "/api/logout":
                 self.handle_logout()
+            elif parsed.path == "/api/friends/request":
+                self.handle_friend_request()
+            elif parsed.path == "/api/friends/action":
+                self.handle_friend_action()
             elif parsed.path == "/api/join":
                 self.handle_join()
             elif parsed.path == "/api/send":
@@ -461,6 +562,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_me(self):
         self.send_json(200, {"user": public_user(self.current_user())})
+
+    def handle_friends(self):
+        user = self.require_user()
+        if not user:
+            return
+        self.send_json(200, friend_data_for_user(user["id"]))
 
     def handle_register(self):
         data = self.read_json()
@@ -520,6 +627,133 @@ class Handler(BaseHTTPRequestHandler):
     def handle_logout(self):
         delete_session(self.session_token())
         self.send_auth_json(200, {"ok": True}, clear_cookie=True)
+
+    def handle_friend_request(self):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        username = normalize_username(str(data.get("username", "")))
+        if len(username) < 3:
+            self.send_json(400, {"error": "请输入正确的好友用户名"})
+            return
+
+        now = time.time()
+        with db_lock, db_connection() as conn:
+            target = conn.execute(
+                "SELECT id, username, display_name FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if not target:
+                self.send_json(404, {"error": "没有找到这个用户"})
+                return
+            if target["id"] == user["id"]:
+                self.send_json(400, {"error": "不能添加自己为好友"})
+                return
+
+            user_a_id, user_b_id = friendship_pair(user["id"], target["id"])
+            existing = conn.execute(
+                """
+                SELECT id, requester_id, status
+                FROM friendships
+                WHERE user_a_id = ? AND user_b_id = ?
+                """,
+                (user_a_id, user_b_id),
+            ).fetchone()
+
+            if existing and existing["status"] == "accepted":
+                self.send_json(200, {"message": "你们已经是好友"})
+                return
+            if existing and existing["requester_id"] == user["id"]:
+                self.send_json(200, {"message": "好友请求已经发送过了"})
+                return
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE friendships
+                    SET status = 'accepted', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, existing["id"]),
+                )
+                self.send_json(200, {"message": "对方之前发过请求，已自动成为好友"})
+                return
+
+            conn.execute(
+                """
+                INSERT INTO friendships (user_a_id, user_b_id, requester_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'pending', ?, ?)
+                """,
+                (user_a_id, user_b_id, user["id"], now, now),
+            )
+        self.send_json(200, {"message": "好友请求已发送"})
+
+    def handle_friend_action(self):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        action = str(data.get("action", "")).strip().lower()
+        try:
+            friendship_id = int(data.get("friendshipId", 0))
+        except (TypeError, ValueError):
+            self.send_json(400, {"error": "好友请求不存在"})
+            return
+        if friendship_id <= 0:
+            self.send_json(400, {"error": "好友请求不存在"})
+            return
+
+        now = time.time()
+        with db_lock, db_connection() as conn:
+            friendship = conn.execute(
+                """
+                SELECT id, user_a_id, user_b_id, requester_id, status
+                FROM friendships
+                WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)
+                """,
+                (friendship_id, user["id"], user["id"]),
+            ).fetchone()
+            if not friendship:
+                self.send_json(404, {"error": "没有找到这条好友记录"})
+                return
+
+            is_requester = friendship["requester_id"] == user["id"]
+            if action == "accept":
+                if friendship["status"] != "pending" or is_requester:
+                    self.send_json(400, {"error": "不能接受这条好友请求"})
+                    return
+                conn.execute(
+                    "UPDATE friendships SET status = 'accepted', updated_at = ? WHERE id = ?",
+                    (now, friendship_id),
+                )
+                self.send_json(200, {"message": "已成为好友"})
+                return
+
+            if action == "decline":
+                if friendship["status"] != "pending" or is_requester:
+                    self.send_json(400, {"error": "不能拒绝这条好友请求"})
+                    return
+                conn.execute("DELETE FROM friendships WHERE id = ?", (friendship_id,))
+                self.send_json(200, {"message": "已拒绝好友请求"})
+                return
+
+            if action == "cancel":
+                if friendship["status"] != "pending" or not is_requester:
+                    self.send_json(400, {"error": "不能取消这条好友请求"})
+                    return
+                conn.execute("DELETE FROM friendships WHERE id = ?", (friendship_id,))
+                self.send_json(200, {"message": "已取消好友请求"})
+                return
+
+            if action == "remove":
+                if friendship["status"] != "accepted":
+                    self.send_json(400, {"error": "你们还不是好友"})
+                    return
+                conn.execute("DELETE FROM friendships WHERE id = ?", (friendship_id,))
+                self.send_json(200, {"message": "已删除好友"})
+                return
+
+        self.send_json(400, {"error": "未知的好友操作"})
 
     def handle_join(self):
         user = self.require_user()

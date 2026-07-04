@@ -32,6 +32,16 @@ const accountAvatar = document.querySelector("#accountAvatar");
 const accountName = document.querySelector("#accountName");
 const accountUsername = document.querySelector("#accountUsername");
 const logoutBtn = document.querySelector("#logoutBtn");
+const friendsPanel = document.querySelector("#friendsPanel");
+const friendSummary = document.querySelector("#friendSummary");
+const friendRefreshBtn = document.querySelector("#friendRefreshBtn");
+const friendForm = document.querySelector("#friendForm");
+const friendUsername = document.querySelector("#friendUsername");
+const friendMessage = document.querySelector("#friendMessage");
+const friendCount = document.querySelector("#friendCount");
+const requestCount = document.querySelector("#requestCount");
+const friendList = document.querySelector("#friendList");
+const friendRequestList = document.querySelector("#friendRequestList");
 const chatMessages = document.querySelector("#chatMessages");
 const chatForm = document.querySelector("#chatForm");
 const chatInput = document.querySelector("#chatInput");
@@ -70,6 +80,7 @@ let noiseFloorDb = -64;
 let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
 let currentUser = null;
+let friendsState = { friends: [], incoming: [], outgoing: [] };
 let chatItems = [];
 let chatCollapsed = false;
 let unreadChatCount = 0;
@@ -283,9 +294,178 @@ async function authRequest(path, body = {}) {
   return data;
 }
 
+async function getJson(path) {
+  const res = await fetch(path);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "读取失败");
+  }
+  return data;
+}
+
 function setAuthMessage(text, mode = "") {
   authMessage.textContent = text;
   authMessage.className = `auth-message ${mode}`;
+}
+
+function setFriendMessage(text, mode = "") {
+  friendMessage.textContent = text;
+  friendMessage.className = `friend-message ${mode}`;
+}
+
+function emptyFriendRow(text) {
+  const row = document.createElement("div");
+  row.className = "friend-empty";
+  row.textContent = text;
+  return row;
+}
+
+function friendActionButton(label, action, friendshipId, tone = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `friend-action ${tone}`;
+  button.dataset.friendAction = action;
+  button.dataset.friendshipId = friendshipId;
+  button.textContent = label;
+  return button;
+}
+
+function friendRow(user, statusText, actions = []) {
+  const row = document.createElement("article");
+  row.className = "friend-row";
+  const avatar = document.createElement("div");
+  avatar.className = "friend-avatar";
+  avatar.style.background = colorFor(String(user.id));
+  avatar.textContent = initials(user.displayName);
+
+  const main = document.createElement("div");
+  main.className = "friend-main";
+  const name = document.createElement("strong");
+  name.textContent = user.displayName;
+  const meta = document.createElement("span");
+  meta.textContent = statusText;
+  main.append(name, meta);
+
+  const actionWrap = document.createElement("div");
+  actionWrap.className = "friend-actions";
+  actions.forEach((action) => actionWrap.appendChild(action));
+
+  row.append(avatar, main, actionWrap);
+  return row;
+}
+
+function renderFriends() {
+  const friends = friendsState.friends || [];
+  const incoming = friendsState.incoming || [];
+  const outgoing = friendsState.outgoing || [];
+  const pendingCount = incoming.length + outgoing.length;
+
+  friendSummary.textContent = `${friends.length} 位好友${pendingCount ? ` · ${pendingCount} 个请求` : ""}`;
+  friendCount.textContent = String(friends.length);
+  requestCount.textContent = String(pendingCount);
+  friendList.textContent = "";
+  friendRequestList.textContent = "";
+
+  if (!currentUser) {
+    friendList.appendChild(emptyFriendRow("登录后显示好友"));
+    friendRequestList.appendChild(emptyFriendRow("登录后显示请求"));
+    return;
+  }
+
+  if (!friends.length) {
+    friendList.appendChild(emptyFriendRow("还没有好友"));
+  } else {
+    friends.forEach((friend) => {
+      const status = `@${friend.username} · ${friend.online ? "在线" : "离线"}`;
+      friendList.appendChild(
+        friendRow(friend, status, [
+          friendActionButton("删除", "remove", friend.friendshipId, "danger")
+        ])
+      );
+    });
+  }
+
+  if (!pendingCount) {
+    friendRequestList.appendChild(emptyFriendRow("暂无好友请求"));
+  }
+  incoming.forEach((friend) => {
+    friendRequestList.appendChild(
+      friendRow(friend, `@${friend.username} 想加你`, [
+        friendActionButton("同意", "accept", friend.friendshipId, "ok"),
+        friendActionButton("拒绝", "decline", friend.friendshipId)
+      ])
+    );
+  });
+  outgoing.forEach((friend) => {
+    friendRequestList.appendChild(
+      friendRow(friend, `已发送给 @${friend.username}`, [
+        friendActionButton("取消", "cancel", friend.friendshipId)
+      ])
+    );
+  });
+}
+
+async function loadFriends(silent = false) {
+  if (!currentUser) {
+    friendsState = { friends: [], incoming: [], outgoing: [] };
+    renderFriends();
+    return;
+  }
+  if (!silent) {
+    setFriendMessage("正在同步好友...");
+  }
+  try {
+    friendsState = await getJson("/api/friends");
+    renderFriends();
+    if (!silent) {
+      setFriendMessage("");
+    }
+  } catch (error) {
+    setFriendMessage(error.message, "error");
+  }
+}
+
+async function submitFriendRequest(event) {
+  event.preventDefault();
+  if (!currentUser) {
+    setFriendMessage("请先登录账号", "error");
+    return;
+  }
+  const username = friendUsername.value.trim();
+  if (!username) {
+    setFriendMessage("请输入好友用户名", "error");
+    return;
+  }
+  setFriendMessage("正在发送请求...");
+  try {
+    const data = await authRequest("/api/friends/request", { username });
+    friendUsername.value = "";
+    setFriendMessage(data.message || "好友请求已发送", "ok");
+    await loadFriends(true);
+  } catch (error) {
+    setFriendMessage(error.message, "error");
+  }
+}
+
+async function runFriendAction(button) {
+  const action = button.dataset.friendAction;
+  const friendshipId = Number(button.dataset.friendshipId);
+  if (!action || !friendshipId) return;
+  button.disabled = true;
+  try {
+    const data = await authRequest("/api/friends/action", { action, friendshipId });
+    setFriendMessage(data.message || "好友已更新", "ok");
+    await loadFriends(true);
+  } catch (error) {
+    setFriendMessage(error.message, "error");
+    button.disabled = false;
+  }
+}
+
+function handleFriendActionClick(event) {
+  const button = event.target.closest("[data-friend-action]");
+  if (!button) return;
+  runFriendAction(button);
 }
 
 function setJoinLocked(locked) {
@@ -299,6 +479,7 @@ function setCurrentUser(user) {
   currentUser = user;
   authPanel.hidden = Boolean(user);
   accountCard.hidden = !user;
+  friendsPanel.hidden = !user;
   setJoinLocked(!user);
 
   if (user) {
@@ -311,10 +492,16 @@ function setCurrentUser(user) {
     }
     localStorage.setItem("partylink:name", user.displayName);
     setAuthMessage("");
+    setFriendMessage("");
     connectionHint.textContent = "账号已登录，可以创建房间或加入朋友房间。";
+    loadFriends(true);
   } else {
     accountName.textContent = "";
     accountUsername.textContent = "";
+    friendUsername.value = "";
+    friendsState = { friends: [], incoming: [], outgoing: [] };
+    renderFriends();
+    setFriendMessage("");
     connectionHint.textContent = "请先登录账号，再创建房间或加入朋友房间。";
   }
 }
@@ -792,6 +979,7 @@ async function joinRoom(event) {
     upsertPeerRecord(localPeer());
     applyMuteState();
     applyOutputVolume();
+    loadFriends(true);
     poll();
 
     for (const peer of data.peers) {
@@ -854,6 +1042,7 @@ async function leaveRoom() {
   setServerStatus("已离开房间", "offline");
   setMicStatus("麦克风未开启", false);
   connectionHint.textContent = "创建房间后，邀请朋友打开链接加入。";
+  loadFriends(true);
   window.history.replaceState(null, "", "/");
   renderPeers();
 }
@@ -872,6 +1061,10 @@ joinForm.addEventListener("submit", joinRoom);
 authForm.addEventListener("submit", submitLogin);
 registerBtn.addEventListener("click", submitRegister);
 logoutBtn.addEventListener("click", logout);
+friendForm.addEventListener("submit", submitFriendRequest);
+friendRefreshBtn.addEventListener("click", () => loadFriends());
+friendList.addEventListener("click", handleFriendActionClick);
+friendRequestList.addEventListener("click", handleFriendActionClick);
 muteBtn.addEventListener("click", () => {
   state.muted = !state.muted;
   applyMuteState();
@@ -913,6 +1106,12 @@ window.addEventListener("keyup", (event) => {
   }
 });
 
+window.addEventListener("focus", () => {
+  if (currentUser) {
+    loadFriends(true);
+  }
+});
+
 window.addEventListener("beforeunload", () => {
   if (state.joined) {
     navigator.sendBeacon("/api/leave", JSON.stringify({ room: state.room, clientId: state.clientId }));
@@ -926,3 +1125,4 @@ loadCurrentUser();
 refreshInviteBaseUrl();
 renderPeers();
 renderChat();
+renderFriends();
