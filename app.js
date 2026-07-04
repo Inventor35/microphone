@@ -40,9 +40,14 @@ let state = {
   pollAbort: false
 };
 
+let rawLocalStream = null;
 let localStream = null;
 let audioContext = null;
 let localAnalyser = null;
+let noiseAnalyser = null;
+let noiseGateGain = null;
+let noiseGateFrame = 0;
+let noiseFloorDb = -64;
 let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
 const peers = new Map();
@@ -191,18 +196,92 @@ async function startMic() {
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
-      autoGainControl: true
+      autoGainControl: true,
+      channelCount: 1
     },
     video: false
   };
-  localStream = await navigator.mediaDevices.getUserMedia(constraints);
+  rawLocalStream = await navigator.mediaDevices.getUserMedia(constraints);
   audioContext = new AudioContext();
-  const source = audioContext.createMediaStreamSource(localStream);
-  localAnalyser = audioContext.createAnalyser();
-  localAnalyser.fftSize = 128;
-  source.connect(localAnalyser);
+  localStream = buildCleanMicStream(rawLocalStream);
+  watchNoiseGate();
   watchLocalMeter();
   setMicStatus("麦克风已开启", true);
+}
+
+function buildCleanMicStream(stream) {
+  const source = audioContext.createMediaStreamSource(stream);
+  const highpass = audioContext.createBiquadFilter();
+  const lowpass = audioContext.createBiquadFilter();
+  const compressor = audioContext.createDynamicsCompressor();
+  const destination = audioContext.createMediaStreamDestination();
+
+  highpass.type = "highpass";
+  highpass.frequency.value = 120;
+  highpass.Q.value = 0.7;
+
+  lowpass.type = "lowpass";
+  lowpass.frequency.value = 7800;
+  lowpass.Q.value = 0.7;
+
+  compressor.threshold.value = -34;
+  compressor.knee.value = 18;
+  compressor.ratio.value = 4;
+  compressor.attack.value = 0.004;
+  compressor.release.value = 0.18;
+
+  noiseAnalyser = audioContext.createAnalyser();
+  noiseAnalyser.fftSize = 1024;
+  noiseGateGain = audioContext.createGain();
+  noiseGateGain.gain.value = 1;
+  localAnalyser = audioContext.createAnalyser();
+  localAnalyser.fftSize = 128;
+
+  source.connect(highpass);
+  highpass.connect(lowpass);
+  lowpass.connect(compressor);
+  compressor.connect(noiseAnalyser);
+  compressor.connect(noiseGateGain);
+  noiseGateGain.connect(localAnalyser);
+  localAnalyser.connect(destination);
+
+  return destination.stream;
+}
+
+function dbFromTimeDomain(data) {
+  let sum = 0;
+  for (const sample of data) {
+    sum += sample * sample;
+  }
+  const rms = Math.sqrt(sum / data.length) || 0.000001;
+  return 20 * Math.log10(rms);
+}
+
+function watchNoiseGate() {
+  if (!noiseAnalyser || !noiseGateGain) return;
+  const data = new Float32Array(noiseAnalyser.fftSize);
+
+  function tick() {
+    if (!noiseAnalyser || !noiseGateGain || !audioContext) return;
+    noiseAnalyser.getFloatTimeDomainData(data);
+    const db = dbFromTimeDomain(data);
+    const strongNoiseReduction = noiseToggle.checked;
+
+    if (strongNoiseReduction && db < noiseFloorDb + 8) {
+      noiseFloorDb = noiseFloorDb * 0.985 + db * 0.015;
+    }
+
+    const openDb = Math.max(-52, noiseFloorDb + 10);
+    const closeDb = openDb - 6;
+    const currentlyOpen = noiseGateGain.gain.value > 0.3;
+    const shouldOpen = !strongNoiseReduction || (currentlyOpen ? db > closeDb : db > openDb);
+    const targetGain = shouldOpen ? 1 : 0.035;
+    const timeConstant = shouldOpen ? 0.012 : 0.11;
+    noiseGateGain.gain.setTargetAtTime(targetGain, audioContext.currentTime, timeConstant);
+    noiseGateFrame = requestAnimationFrame(tick);
+  }
+
+  tick();
 }
 
 function watchLocalMeter() {
@@ -230,6 +309,11 @@ function watchLocalMeter() {
 function applyMuteState() {
   const pttActive = pttMode.value === "space";
   const shouldEnable = !state.muted && (!pttActive || pttHeld);
+  if (rawLocalStream) {
+    rawLocalStream.getAudioTracks().forEach((track) => {
+      track.enabled = shouldEnable;
+    });
+  }
   if (localStream) {
     localStream.getAudioTracks().forEach((track) => {
       track.enabled = shouldEnable;
@@ -239,6 +323,17 @@ function applyMuteState() {
   deafenBtn.classList.toggle("active", !state.deafened);
   setMicStatus(state.muted ? "麦克风静音" : pttActive && !pttHeld ? "按住空格说话" : "麦克风已开启", !state.muted);
   upsertPeerRecord(localPeer());
+}
+
+function applyNoiseConstraints() {
+  if (!rawLocalStream) return;
+  rawLocalStream.getAudioTracks().forEach((track) => {
+    track.applyConstraints({
+      echoCancellation: true,
+      noiseSuppression: noiseToggle.checked,
+      autoGainControl: true
+    }).catch(() => {});
+  });
 }
 
 function applyOutputVolume() {
@@ -460,8 +555,23 @@ async function leaveRoom() {
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
   }
+  if (rawLocalStream) {
+    rawLocalStream.getTracks().forEach((track) => track.stop());
+  }
+  if (noiseGateFrame) {
+    cancelAnimationFrame(noiseGateFrame);
+  }
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+  }
+  rawLocalStream = null;
   localStream = null;
+  audioContext = null;
   localAnalyser = null;
+  noiseAnalyser = null;
+  noiseGateGain = null;
+  noiseGateFrame = 0;
+  noiseFloorDb = -64;
   state = {
     room: "",
     clientId: "",
@@ -508,6 +618,7 @@ deafenBtn.addEventListener("click", () => {
 leaveBtn.addEventListener("click", leaveRoom);
 outputVolume.addEventListener("input", applyOutputVolume);
 pttMode.addEventListener("change", applyMuteState);
+noiseToggle.addEventListener("change", applyNoiseConstraints);
 copyInviteBtn.addEventListener("click", async () => {
   await refreshInviteBaseUrl();
   const url = `${inviteBaseUrl}/?room=${encodeURIComponent(state.room)}`;
