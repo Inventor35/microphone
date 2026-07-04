@@ -488,15 +488,30 @@ h2 {
   bottom: 74px;
   z-index: 4;
   display: grid;
-  grid-template-rows: auto minmax(90px, 1fr) auto auto;
-  gap: 8px;
-  width: min(360px, calc(100% - 44px));
-  max-height: 280px;
-  padding: 10px;
-  background: rgba(12, 14, 18, 0.74);
+  grid-template-rows: auto minmax(54px, 1fr) auto auto;
+  gap: 6px;
+  width: min(310px, calc(100% - 44px));
+  max-height: 210px;
+  padding: 8px;
+  background: rgba(12, 14, 18, 0.62);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   backdrop-filter: blur(16px);
+  transition: width 160ms ease, max-height 160ms ease, background 160ms ease;
+}
+
+.public-chat.collapsed {
+  grid-template-rows: auto;
+  width: min(178px, calc(100% - 44px));
+  max-height: 42px;
+  overflow: hidden;
+  background: rgba(12, 14, 18, 0.52);
+}
+
+.public-chat.collapsed .chat-messages,
+.public-chat.collapsed .emoji-tray,
+.public-chat.collapsed .chat-form {
+  display: none;
 }
 
 .chat-head {
@@ -506,17 +521,38 @@ h2 {
   gap: 10px;
 }
 
+.chat-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .chat-head span {
   color: var(--muted);
   font-size: 12px;
+  white-space: nowrap;
+}
+
+.chat-toggle {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text);
+  background: #252a31;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-weight: 900;
 }
 
 .chat-messages {
   display: grid;
   align-content: end;
-  gap: 7px;
+  gap: 5px;
   overflow-y: auto;
-  min-height: 92px;
+  min-height: 58px;
   padding-right: 3px;
 }
 
@@ -536,9 +572,9 @@ h2 {
 }
 
 .chat-row p {
-  max-width: min(260px, 100%);
+  max-width: min(230px, 100%);
   margin: 0;
-  padding: 7px 9px;
+  padding: 6px 8px;
   overflow-wrap: anywhere;
   color: var(--text);
   background: rgba(44, 49, 59, 0.92);
@@ -554,41 +590,41 @@ h2 {
 }
 
 .chat-row.emoji-row p {
-  padding: 6px 10px;
-  font-size: 28px;
+  padding: 4px 8px;
+  font-size: 22px;
   line-height: 1;
 }
 
 .emoji-tray {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
-  gap: 5px;
+  gap: 4px;
 }
 
 .emoji-tray button {
   display: grid;
   place-items: center;
   min-width: 0;
-  height: 32px;
+  height: 28px;
   color: var(--text);
   background: #252a31;
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .chat-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 64px;
+  grid-template-columns: minmax(0, 1fr) 54px;
   gap: 6px;
 }
 
 .chat-form input {
-  min-height: 36px;
+  min-height: 32px;
 }
 
 .chat-form button {
-  min-height: 36px;
+  min-height: 32px;
   color: #08100c;
   background: var(--green);
   border: 0;
@@ -605,10 +641,10 @@ h2 {
 
 .emoji-burst {
   position: absolute;
-  bottom: 86px;
-  font-size: clamp(42px, 7vw, 84px);
-  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.42));
-  animation: emoji-pop 2.1s ease-out forwards;
+  bottom: 78px;
+  font-size: clamp(30px, 4.6vw, 56px);
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.36));
+  animation: emoji-pop 1.7s ease-out forwards;
 }
 
 .emoji-burst.mine {
@@ -618,36 +654,36 @@ h2 {
 @keyframes emoji-pop {
   0% {
     opacity: 0;
-    transform: translateY(24px) scale(0.72) rotate(-8deg);
+    transform: translateY(16px) scale(0.78) rotate(-6deg);
   }
   14% {
     opacity: 1;
   }
   68% {
     opacity: 1;
-    transform: translateY(-96px) scale(1.08) rotate(7deg);
+    transform: translateY(-54px) scale(1.04) rotate(5deg);
   }
   100% {
     opacity: 0;
-    transform: translateY(-142px) scale(0.92) rotate(12deg);
+    transform: translateY(-82px) scale(0.88) rotate(9deg);
   }
 }
 
 @keyframes emoji-pop-mine {
   0% {
     opacity: 0;
-    transform: translateY(18px) scale(0.78) rotate(8deg);
+    transform: translateY(14px) scale(0.82) rotate(6deg);
   }
   14% {
     opacity: 1;
   }
   70% {
     opacity: 1;
-    transform: translateY(-104px) scale(1.1) rotate(-6deg);
+    transform: translateY(-58px) scale(1.05) rotate(-5deg);
   }
   100% {
     opacity: 0;
-    transform: translateY(-150px) scale(0.95) rotate(-12deg);
+    transform: translateY(-86px) scale(0.9) rotate(-9deg);
   }
 }
 
@@ -858,10 +894,14 @@ h2 {
 
   .public-chat {
     left: 16px;
-    right: 16px;
+    right: auto;
     bottom: 74px;
-    width: auto;
-    max-height: 255px;
+    width: min(300px, calc(100% - 32px));
+    max-height: 196px;
+  }
+
+  .public-chat.collapsed {
+    width: min(178px, calc(100% - 32px));
   }
 
   .hud {

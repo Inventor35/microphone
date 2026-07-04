@@ -113,7 +113,10 @@
           <section class="public-chat" aria-label="房间公屏">
             <div class="chat-head">
               <strong>公屏</strong>
-              <span id="chatStatus">等待入房</span>
+              <div class="chat-head-actions">
+                <span id="chatStatus">等待入房</span>
+                <button class="chat-toggle" id="chatToggle" type="button" aria-label="收起公屏" title="收起公屏">−</button>
+              </div>
             </div>
             <div class="chat-messages" id="chatMessages" aria-live="polite"></div>
             <div class="emoji-tray" aria-label="发送表情">

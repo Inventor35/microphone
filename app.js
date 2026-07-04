@@ -36,6 +36,7 @@ const chatMessages = document.querySelector("#chatMessages");
 const chatForm = document.querySelector("#chatForm");
 const chatInput = document.querySelector("#chatInput");
 const chatStatus = document.querySelector("#chatStatus");
+const chatToggle = document.querySelector("#chatToggle");
 const emojiBurstLayer = document.querySelector("#emojiBurstLayer");
 const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
@@ -70,6 +71,8 @@ let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
 let currentUser = null;
 let chatItems = [];
+let chatCollapsed = false;
+let unreadChatCount = 0;
 const peers = new Map();
 
 const params = new URLSearchParams(window.location.search);
@@ -105,7 +108,30 @@ function setChatEnabled(enabled) {
   emojiButtons.forEach((button) => {
     button.disabled = !enabled;
   });
-  chatStatus.textContent = enabled ? "房内可见" : "等待入房";
+  updateChatChrome();
+}
+
+function updateChatChrome() {
+  const enabled = !chatInput.disabled;
+  document.querySelector(".public-chat").classList.toggle("collapsed", chatCollapsed);
+  chatToggle.textContent = chatCollapsed ? "+" : "−";
+  chatToggle.title = chatCollapsed ? "展开公屏" : "收起公屏";
+  chatToggle.setAttribute("aria-label", chatCollapsed ? "展开公屏" : "收起公屏");
+  if (!enabled) {
+    chatStatus.textContent = "等待入房";
+  } else if (chatCollapsed && unreadChatCount > 0) {
+    chatStatus.textContent = `${unreadChatCount} 条新消息`;
+  } else {
+    chatStatus.textContent = chatCollapsed ? "已收起" : "房内可见";
+  }
+}
+
+function toggleChat() {
+  chatCollapsed = !chatCollapsed;
+  if (!chatCollapsed) {
+    unreadChatCount = 0;
+  }
+  updateChatChrome();
 }
 
 function peerName(peerId, fallback = "队友") {
@@ -137,14 +163,18 @@ function addChatItem(item) {
   if (chatItems.length > 60) {
     chatItems = chatItems.slice(-60);
   }
+  if (chatCollapsed && !item.mine) {
+    unreadChatCount = Math.min(99, unreadChatCount + 1);
+  }
   renderChat();
+  updateChatChrome();
 }
 
 function burstEmoji(emoji, mine = false) {
   const node = document.createElement("div");
   node.className = `emoji-burst ${mine ? "mine" : ""}`;
   node.textContent = emoji;
-  node.style.left = `${18 + Math.random() * 58}%`;
+  node.style.right = `${9 + Math.random() * 22}%`;
   node.style.animationDelay = `${Math.random() * 120}ms`;
   emojiBurstLayer.appendChild(node);
   window.setTimeout(() => node.remove(), 2300);
@@ -754,6 +784,8 @@ async function joinRoom(event) {
     deafenBtn.disabled = false;
     leaveBtn.disabled = false;
     setChatEnabled(true);
+    chatCollapsed = false;
+    unreadChatCount = 0;
     chatItems = [];
     addChatItem({ kind: "text", text: `${state.name} 进入了房间`, name: "系统", mine: false });
 
@@ -814,6 +846,8 @@ async function leaveRoom() {
   deafenBtn.disabled = true;
   leaveBtn.disabled = true;
   setChatEnabled(false);
+  chatCollapsed = false;
+  unreadChatCount = 0;
   chatInput.value = "";
   chatItems = [];
   renderChat();
@@ -854,6 +888,7 @@ outputVolume.addEventListener("input", applyOutputVolume);
 pttMode.addEventListener("change", applyMuteState);
 noiseToggle.addEventListener("change", applyNoiseConstraints);
 chatForm.addEventListener("submit", sendChatMessage);
+chatToggle.addEventListener("click", toggleChat);
 emojiButtons.forEach((button) => {
   button.addEventListener("click", () => sendEmoji(button.dataset.emoji));
 });
@@ -886,6 +921,7 @@ window.addEventListener("beforeunload", () => {
 
 setCurrentUser(null);
 setChatEnabled(false);
+updateChatChrome();
 loadCurrentUser();
 refreshInviteBaseUrl();
 renderPeers();
