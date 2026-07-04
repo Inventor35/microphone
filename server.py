@@ -29,6 +29,7 @@ STATIC_FILES = {
     "/index.html": "index.html",
     "/styles.css": "styles.css",
     "/app.js": "app.js",
+    "/assets/gaming-room-bg.jpg": os.path.join("assets", "gaming-room-bg.jpg"),
 }
 
 rooms = {}

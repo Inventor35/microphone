@@ -1,16 +1,19 @@
 :root {
   color-scheme: dark;
-  --bg: #101114;
-  --panel: #191b20;
-  --panel-2: #22252b;
-  --line: #323640;
+  --bg: #080b10;
+  --panel: rgba(16, 20, 27, 0.78);
+  --panel-2: rgba(29, 36, 48, 0.76);
+  --line: rgba(151, 180, 205, 0.16);
   --text: #f4f7fb;
-  --muted: #9ca6b5;
-  --blue: #48a7ff;
-  --green: #42d392;
-  --pink: #ff5b8f;
-  --yellow: #f5c15c;
+  --muted: #a8b7c8;
+  --blue: #50b7ff;
+  --green: #49e3a9;
+  --pink: #ff6a9f;
+  --yellow: #ffd36a;
   --danger: #ff5f57;
+  --glass: rgba(11, 15, 21, 0.68);
+  --glass-strong: rgba(13, 17, 24, 0.86);
+  --shadow: 0 22px 55px rgba(0, 0, 0, 0.36);
 }
 
 * {
@@ -29,11 +32,24 @@ body {
 body {
   margin: 0;
   background:
-    linear-gradient(135deg, rgba(72, 167, 255, 0.16), transparent 34%),
-    linear-gradient(315deg, rgba(66, 211, 146, 0.12), transparent 36%),
+    linear-gradient(140deg, rgba(80, 183, 255, 0.16), transparent 34%),
+    linear-gradient(315deg, rgba(73, 227, 169, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 30%),
     var(--bg);
   color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.62), transparent 72%);
 }
 
 button,
@@ -44,6 +60,7 @@ select {
 
 button {
   cursor: pointer;
+  white-space: nowrap;
 }
 
 button:disabled {
@@ -53,25 +70,28 @@ button:disabled {
 
 .shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 300px;
-  gap: 16px;
+  grid-template-columns: 296px minmax(0, 1fr) 308px;
+  gap: 18px;
   min-height: 100vh;
-  padding: 16px;
+  padding: 18px;
 }
 
 .sidebar,
 .panel {
-  background: rgba(25, 27, 32, 0.92);
+  position: relative;
+  background: linear-gradient(180deg, rgba(20, 26, 36, 0.86), rgba(11, 15, 22, 0.78));
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 18px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(22px);
 }
 
 .brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 24px;
+  margin-bottom: 22px;
 }
 
 .brand p,
@@ -83,7 +103,8 @@ button:disabled {
 }
 
 .brand strong {
-  font-size: 20px;
+  font-size: 21px;
+  letter-spacing: 0;
 }
 
 .brand-mark {
@@ -94,9 +115,12 @@ button:disabled {
   width: 44px;
   height: 44px;
   padding: 10px;
-  background: #252a31;
-  border: 1px solid var(--line);
+  background:
+    linear-gradient(135deg, rgba(73, 227, 169, 0.2), rgba(80, 183, 255, 0.1)),
+    #141b24;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(73, 227, 169, 0.14);
 }
 
 .brand-mark span {
@@ -104,6 +128,7 @@ button:disabled {
   width: 8px;
   border-radius: 6px;
   background: var(--green);
+  box-shadow: 0 0 16px currentColor;
 }
 
 .brand-mark span:nth-child(1) {
@@ -131,9 +156,10 @@ button:disabled {
 .account-card {
   margin-bottom: 18px;
   padding: 14px;
-  background: #14171d;
+  background: rgba(8, 12, 18, 0.62);
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .mini-head {
@@ -164,17 +190,19 @@ select {
   width: 100%;
   min-height: 42px;
   color: var(--text);
-  background: #111318;
+  background: rgba(6, 10, 16, 0.74);
   border: 1px solid var(--line);
   border-radius: 6px;
   outline: none;
   padding: 0 12px;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 
 input:focus,
 select:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgba(72, 167, 255, 0.16);
+  background: rgba(7, 12, 20, 0.92);
+  box-shadow: 0 0 0 3px rgba(80, 183, 255, 0.18);
 }
 
 .primary,
@@ -190,9 +218,18 @@ select:focus {
   justify-content: center;
   gap: 10px;
   min-height: 46px;
-  background: var(--blue);
+  background: linear-gradient(135deg, var(--green), var(--blue));
   border-radius: 6px;
+  color: #061014;
   font-weight: 800;
+  box-shadow: 0 14px 28px rgba(73, 227, 169, 0.18);
+  transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+}
+
+.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 18px 34px rgba(80, 183, 255, 0.2);
 }
 
 .primary.compact {
@@ -210,10 +247,18 @@ select:focus {
 .secondary {
   min-height: 40px;
   color: var(--text);
-  background: #303640;
+  background: rgba(48, 56, 70, 0.78);
   border: 1px solid var(--line);
   border-radius: 6px;
   font-weight: 700;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.secondary:hover:not(:disabled),
+.icon-button:hover:not(:disabled),
+.friend-action:hover:not(:disabled) {
+  background: rgba(67, 79, 98, 0.88);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .secondary.small {
@@ -257,6 +302,7 @@ select:focus {
   background: var(--green);
   border-radius: 6px;
   font-weight: 900;
+  box-shadow: 0 0 24px rgba(73, 227, 169, 0.18);
 }
 
 .account-card strong,
@@ -272,9 +318,12 @@ select:focus {
   gap: 12px;
   margin-bottom: 18px;
   padding: 14px;
-  background: #14171d;
+  background:
+    linear-gradient(180deg, rgba(73, 227, 169, 0.07), transparent 42%),
+    rgba(8, 12, 18, 0.62);
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .friends-head,
@@ -341,7 +390,7 @@ select:focus {
   min-width: 24px;
   height: 22px;
   color: #08100c;
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green), var(--yellow));
   border-radius: 6px;
   font-size: 12px;
 }
@@ -361,9 +410,16 @@ select:focus {
   gap: 8px;
   min-height: 46px;
   padding: 7px;
-  background: #1b1f26;
+  background: rgba(18, 24, 33, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 7px;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.friend-row:hover {
+  transform: translateY(-1px);
+  background: rgba(25, 33, 45, 0.92);
+  border-color: rgba(73, 227, 169, 0.18);
 }
 
 .friend-avatar {
@@ -409,7 +465,7 @@ select:focus {
   min-height: 28px;
   padding: 0 8px;
   color: var(--text);
-  background: #303640;
+  background: rgba(48, 56, 70, 0.76);
   border: 1px solid var(--line);
   border-radius: 6px;
   font-size: 12px;
@@ -418,7 +474,7 @@ select:focus {
 
 .friend-action.ok {
   color: #08100c;
-  background: var(--green);
+  background: linear-gradient(135deg, var(--green), var(--blue));
   border-color: transparent;
 }
 
@@ -431,7 +487,7 @@ select:focus {
   min-height: 36px;
   padding: 10px;
   color: var(--muted);
-  background: #111318;
+  background: rgba(6, 10, 16, 0.58);
   border: 1px dashed var(--line);
   border-radius: 7px;
   font-size: 12px;
@@ -448,9 +504,12 @@ select:focus {
   gap: 12px;
   margin-top: 18px;
   padding: 14px;
-  background: var(--panel-2);
+  background:
+    linear-gradient(135deg, rgba(80, 183, 255, 0.1), rgba(73, 227, 169, 0.06)),
+    var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .room-card span,
@@ -471,7 +530,8 @@ select:focus {
   place-items: center;
   width: 40px;
   height: 40px;
-  background: #303640;
+  background: rgba(48, 56, 70, 0.78);
+  border: 1px solid var(--line);
   border-radius: 6px;
 }
 
@@ -518,8 +578,8 @@ svg {
 
 .stage {
   display: grid;
-  grid-template-rows: auto minmax(430px, 1fr) auto;
-  gap: 16px;
+  grid-template-rows: auto minmax(500px, 1fr) auto;
+  gap: 18px;
   min-width: 0;
 }
 
@@ -528,7 +588,7 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 8px 2px 0;
+  padding: 6px 4px 0;
 }
 
 h1,
@@ -537,8 +597,10 @@ h2 {
 }
 
 h1 {
-  font-size: clamp(28px, 4vw, 56px);
-  line-height: 1;
+  max-width: 780px;
+  font-size: clamp(30px, 4vw, 58px);
+  line-height: 0.98;
+  text-shadow: 0 16px 40px rgba(0, 0, 0, 0.42);
 }
 
 h2 {
@@ -556,48 +618,63 @@ h2 {
   width: 8px;
   min-height: 8px;
   height: 12px;
-  background: var(--green);
+  background: linear-gradient(to top, var(--green), var(--blue));
   border-radius: 6px;
+  box-shadow: 0 0 18px rgba(73, 227, 169, 0.24);
   transition: height 120ms ease;
 }
 
 .game-frame {
   position: relative;
   overflow: hidden;
-  min-height: 430px;
+  min-height: 500px;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    radial-gradient(circle at 66% 36%, rgba(245, 193, 92, 0.26), transparent 18%),
-    radial-gradient(circle at 28% 64%, rgba(72, 167, 255, 0.24), transparent 22%),
-    #141821;
-  background-size: 44px 44px, 44px 44px, auto, auto, auto;
-  border: 1px solid var(--line);
+    linear-gradient(90deg, rgba(5, 8, 12, 0.66), rgba(5, 8, 12, 0.12) 42%, rgba(5, 8, 12, 0.62)),
+    linear-gradient(180deg, rgba(5, 8, 12, 0.08), rgba(5, 8, 12, 0.78)),
+    url("/assets/gaming-room-bg.jpg");
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.42);
 }
 
 .game-frame::before {
   content: "";
   position: absolute;
-  inset: 11% 8%;
+  inset: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.034) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.46;
+  pointer-events: none;
+}
+
+.game-frame::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  pointer-events: none;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  transform: skewX(-8deg);
+  border-radius: 6px;
 }
 
 .hud {
   position: absolute;
   left: 22px;
   right: 22px;
-  z-index: 2;
+  z-index: 4;
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 42px;
   padding: 0 14px;
-  background: rgba(13, 15, 18, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 10, 15, 0.64);
+  border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 6px;
   backdrop-filter: blur(16px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.26);
 }
 
 .hud.top {
@@ -619,6 +696,8 @@ h2 {
   width: 92px;
   height: 92px;
   transform: translate(-50%, -50%);
+  z-index: 2;
+  opacity: 0.34;
 }
 
 .reticle::before,
@@ -646,7 +725,7 @@ h2 {
   position: absolute;
   right: 22px;
   top: 84px;
-  z-index: 3;
+  z-index: 5;
   display: grid;
   gap: 10px;
   width: min(320px, calc(100% - 44px));
@@ -656,17 +735,18 @@ h2 {
   position: absolute;
   left: 22px;
   bottom: 74px;
-  z-index: 4;
+  z-index: 5;
   display: grid;
   grid-template-rows: auto minmax(54px, 1fr) auto auto;
   gap: 6px;
   width: min(310px, calc(100% - 44px));
   max-height: 210px;
   padding: 8px;
-  background: rgba(12, 14, 18, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 10, 15, 0.64);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   backdrop-filter: blur(16px);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.3);
   transition: width 160ms ease, max-height 160ms ease, background 160ms ease;
 }
 
@@ -675,7 +755,7 @@ h2 {
   width: min(178px, calc(100% - 44px));
   max-height: 42px;
   overflow: hidden;
-  background: rgba(12, 14, 18, 0.52);
+  background: rgba(7, 10, 15, 0.58);
 }
 
 .public-chat.collapsed .chat-messages,
@@ -711,8 +791,8 @@ h2 {
   height: 24px;
   padding: 0;
   color: var(--text);
-  background: #252a31;
-  border: 1px solid var(--line);
+  background: rgba(37, 46, 58, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 6px;
   font-weight: 900;
 }
@@ -747,7 +827,7 @@ h2 {
   padding: 6px 8px;
   overflow-wrap: anywhere;
   color: var(--text);
-  background: rgba(44, 49, 59, 0.92);
+  background: rgba(28, 36, 47, 0.9);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   font-size: 13px;
@@ -755,8 +835,8 @@ h2 {
 }
 
 .chat-row.mine p {
-  color: #08100c;
-  background: var(--green);
+  color: #061014;
+  background: linear-gradient(135deg, var(--green), var(--blue));
 }
 
 .chat-row.emoji-row p {
@@ -777,10 +857,16 @@ h2 {
   min-width: 0;
   height: 28px;
   color: var(--text);
-  background: #252a31;
-  border: 1px solid var(--line);
+  background: rgba(37, 46, 58, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
   font-size: 16px;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.emoji-tray button:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.04);
+  background: rgba(73, 227, 169, 0.18);
 }
 
 .chat-form {
@@ -795,8 +881,8 @@ h2 {
 
 .chat-form button {
   min-height: 32px;
-  color: #08100c;
-  background: var(--green);
+  color: #061014;
+  background: linear-gradient(135deg, var(--green), var(--blue));
   border: 0;
   border-radius: 6px;
   font-weight: 800;
@@ -805,7 +891,7 @@ h2 {
 .emoji-burst-layer {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   pointer-events: none;
 }
 
@@ -864,10 +950,11 @@ h2 {
   gap: 12px;
   min-height: 64px;
   padding: 10px;
-  background: rgba(20, 23, 29, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(7, 10, 15, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 8px;
   backdrop-filter: blur(16px);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
 }
 
 .avatar {
@@ -903,7 +990,7 @@ h2 {
   width: 14px;
   height: 32px;
   border-radius: 999px;
-  background: var(--line);
+  background: rgba(168, 183, 200, 0.18);
 }
 
 .peer.speaking .voice-ring {
@@ -926,14 +1013,21 @@ h2 {
   place-items: center;
   width: 58px;
   height: 58px;
-  background: #272c34;
+  background: rgba(31, 39, 52, 0.86);
   border: 1px solid var(--line);
   border-radius: 50%;
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.28);
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.round:hover:not(:disabled) {
+  transform: translateY(-2px);
 }
 
 .round.active {
-  background: var(--green);
-  color: #08100c;
+  background: linear-gradient(135deg, var(--green), var(--blue));
+  color: #061014;
+  box-shadow: 0 18px 36px rgba(73, 227, 169, 0.2);
 }
 
 .round.danger {
@@ -966,6 +1060,10 @@ h2 {
   gap: 10px;
   align-items: center;
   min-height: 52px;
+  padding: 8px;
+  background: rgba(8, 12, 18, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
 }
 
 .member .avatar {
@@ -992,7 +1090,7 @@ h2 {
   position: relative;
   width: 44px;
   height: 24px;
-  background: #111318;
+  background: rgba(6, 10, 16, 0.74);
   border: 1px solid var(--line);
   border-radius: 999px;
 }
@@ -1012,11 +1110,16 @@ h2 {
 .toggle input:checked + span::after {
   transform: translateX(19px);
   background: var(--green);
+  box-shadow: 0 0 14px rgba(73, 227, 169, 0.58);
+}
+
+input[type="range"] {
+  accent-color: var(--green);
 }
 
 @media (max-width: 1040px) {
   .shell {
-    grid-template-columns: 260px minmax(0, 1fr);
+    grid-template-columns: 276px minmax(0, 1fr);
   }
 
   .panel {
@@ -1032,11 +1135,12 @@ h2 {
 @media (max-width: 760px) {
   .shell {
     grid-template-columns: 1fr;
+    gap: 14px;
     padding: 10px;
   }
 
   .stage {
-    grid-template-rows: auto minmax(390px, 64vh) auto;
+    grid-template-rows: auto minmax(420px, 68vh) auto;
   }
 
   .stage-header {
@@ -1049,6 +1153,11 @@ h2 {
   h1 {
     font-size: 32px;
     line-height: 1.08;
+  }
+
+  .game-frame {
+    min-height: 420px;
+    background-position: 58% center;
   }
 
   .meter {
