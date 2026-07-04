@@ -50,6 +50,7 @@ const chatToggle = document.querySelector("#chatToggle");
 const emojiBurstLayer = document.querySelector("#emojiBurstLayer");
 const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
+const CHAT_HISTORY_LIMIT = 100;
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 const rtcConfig = {
   iceServers: [
@@ -152,7 +153,7 @@ function peerName(peerId, fallback = "队友") {
 
 function renderChat() {
   chatMessages.textContent = "";
-  for (const item of chatItems.slice(-36)) {
+  for (const item of chatItems.slice(-CHAT_HISTORY_LIMIT)) {
     const row = document.createElement("article");
     row.className = `chat-row ${item.mine ? "mine" : ""} ${item.kind === "emoji" ? "emoji-row" : ""}`;
 
@@ -171,12 +172,25 @@ function renderChat() {
 
 function addChatItem(item) {
   chatItems.push({ id: `${Date.now()}-${Math.random()}`, ...item });
-  if (chatItems.length > 60) {
-    chatItems = chatItems.slice(-60);
+  if (chatItems.length > CHAT_HISTORY_LIMIT) {
+    chatItems = chatItems.slice(-CHAT_HISTORY_LIMIT);
   }
   if (chatCollapsed && !item.mine) {
     unreadChatCount = Math.min(99, unreadChatCount + 1);
   }
+  renderChat();
+  updateChatChrome();
+}
+
+function loadChatHistory(history = []) {
+  chatItems = history.slice(-CHAT_HISTORY_LIMIT).map((item) => ({
+    id: `history-${item.id || `${item.sentAt || Date.now()}-${Math.random()}`}`,
+    kind: item.kind === "emoji" ? "emoji" : "text",
+    text: item.text || "",
+    emoji: item.emoji || "",
+    name: item.name || "队友",
+    mine: Number(item.userId) === Number(currentUser?.id)
+  }));
   renderChat();
   updateChatChrome();
 }
@@ -970,10 +984,10 @@ async function joinRoom(event) {
     muteBtn.disabled = false;
     deafenBtn.disabled = false;
     leaveBtn.disabled = false;
-    setChatEnabled(true);
     chatCollapsed = false;
     unreadChatCount = 0;
-    chatItems = [];
+    loadChatHistory(data.history || []);
+    setChatEnabled(true);
     addChatItem({ kind: "text", text: `${state.name} 进入了房间`, name: "系统", mine: false });
 
     upsertPeerRecord(localPeer());

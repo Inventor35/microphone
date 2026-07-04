@@ -23,6 +23,7 @@ DB_FILE = os.environ.get("PARTYLINK_DB", os.path.join(ROOT, "partylink.db"))
 SESSION_COOKIE = "partylink_session"
 SESSION_TTL = 60 * 60 * 24 * 30
 HASH_ITERATIONS = 210000
+CHAT_HISTORY_LIMIT = 100
 ALLOWED_EMOJIS = {"😂", "🔥", "👍", "🎯", "💀", "👏", "❤️", "😮", "😎", "😭"}
 STATIC_FILES = {
     "/": "index.html",
@@ -135,11 +136,26 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS room_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_code TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                sender_name TEXT NOT NULL,
+                message_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_user_a ON friendships(user_a_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_user_b ON friendships(user_b_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_code, id)")
 
 
 def normalize_username(username):
@@ -278,6 +294,62 @@ def friend_data_for_user(user_id):
     incoming.sort(key=lambda item: item["updatedAt"], reverse=True)
     outgoing.sort(key=lambda item: item["updatedAt"], reverse=True)
     return {"friends": friends, "incoming": incoming, "outgoing": outgoing}
+
+
+def save_room_message(room_code, user_id, sender_name, message_type, content):
+    now = time.time()
+    with db_lock, db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO room_messages (room_code, user_id, sender_name, message_type, content, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (room_code, user_id, sender_name[:24], message_type, content, now),
+        )
+        conn.execute(
+            """
+            DELETE FROM room_messages
+            WHERE room_code = ?
+              AND id NOT IN (
+                SELECT id
+                FROM room_messages
+                WHERE room_code = ?
+                ORDER BY id DESC
+                LIMIT ?
+              )
+            """,
+            (room_code, room_code, CHAT_HISTORY_LIMIT),
+        )
+
+
+def load_room_history(room_code):
+    with db_lock, db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, sender_name, message_type, content, created_at
+            FROM room_messages
+            WHERE room_code = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (room_code, CHAT_HISTORY_LIMIT),
+        ).fetchall()
+
+    history = []
+    for row in reversed(rows):
+        item = {
+            "id": row["id"],
+            "userId": row["user_id"],
+            "name": row["sender_name"],
+            "kind": "emoji" if row["message_type"] == "emoji" else "text",
+            "sentAt": row["created_at"],
+        }
+        if row["message_type"] == "emoji":
+            item["emoji"] = row["content"]
+        else:
+            item["text"] = row["content"]
+        history.append(item)
+    return history
 
 
 def local_ipv4_addresses():
@@ -784,7 +856,15 @@ class Handler(BaseHTTPRequestHandler):
             broadcast(room_code, {"type": "peer-joined", "peer": public_peer(peer)}, exclude=client_id)
             condition.notify_all()
 
-        self.send_json(200, {"room": room_code, "clientId": client_id, "peers": peers})
+        self.send_json(
+            200,
+            {
+                "room": room_code,
+                "clientId": client_id,
+                "peers": peers,
+                "history": load_room_history(room_code),
+            },
+        )
 
     def handle_send(self):
         user = self.require_user()
@@ -796,6 +876,7 @@ class Handler(BaseHTTPRequestHandler):
         target = data.get("to")
         message_type = str(data.get("type", ""))
         payload = data.get("payload", {})
+        history_content = None
 
         with condition:
             room = rooms.get(room_code)
@@ -812,13 +893,15 @@ class Handler(BaseHTTPRequestHandler):
                 if not text:
                     self.send_json(400, {"error": "消息不能为空"})
                     return
-                payload = {"text": text[:240], "name": peer["name"]}
+                history_content = text[:240]
+                payload = {"text": history_content, "name": peer["name"]}
                 target = None
             elif message_type == "emoji":
                 emoji = str(payload.get("emoji", "")).strip()
                 if emoji not in ALLOWED_EMOJIS:
                     self.send_json(400, {"error": "不支持这个表情"})
                     return
+                history_content = emoji
                 payload = {"emoji": emoji, "name": peer["name"]}
                 target = None
 
@@ -827,6 +910,8 @@ class Handler(BaseHTTPRequestHandler):
                 push_message(room_code, str(target), body)
             else:
                 broadcast(room_code, body, exclude=sender)
+                if message_type in {"chat", "emoji"} and history_content:
+                    save_room_message(room_code, user["id"], peer["name"], message_type, history_content)
             condition.notify_all()
 
         self.send_json(200, {"ok": True})
