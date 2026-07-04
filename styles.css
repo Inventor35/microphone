@@ -121,9 +121,35 @@ button:disabled {
 }
 
 .join-panel,
-.settings {
+.settings,
+.auth-panel {
   display: grid;
   gap: 14px;
+}
+
+.auth-panel,
+.account-card {
+  margin-bottom: 18px;
+  padding: 14px;
+  background: #14171d;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.mini-head {
+  display: grid;
+  gap: 3px;
+}
+
+.mini-head strong {
+  font-size: 16px;
+}
+
+.mini-head span,
+.account-card span,
+.auth-message {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 label {
@@ -169,12 +195,80 @@ select:focus {
   font-weight: 800;
 }
 
+.primary.compact {
+  min-height: 40px;
+}
+
 .primary .icon {
   width: 22px;
   height: 22px;
   line-height: 19px;
   border: 2px solid currentColor;
   border-radius: 50%;
+}
+
+.secondary {
+  min-height: 40px;
+  color: var(--text);
+  background: #303640;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.secondary.small {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.auth-message {
+  min-height: 17px;
+  margin: 0;
+}
+
+.auth-message.error {
+  color: #ff9aa7;
+}
+
+.auth-message.ok {
+  color: var(--green);
+}
+
+.account-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.account-avatar {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  color: #101114;
+  background: var(--green);
+  border-radius: 6px;
+  font-weight: 900;
+}
+
+.account-card strong,
+.account-card span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.join-panel.locked {
+  opacity: 0.58;
 }
 
 .room-card {

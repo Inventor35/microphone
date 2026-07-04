@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import json
+import hashlib
+import hmac
 import mimetypes
 import os
 import socket
 import ssl
 import subprocess
 import secrets
+import sqlite3
 import threading
 import time
 import urllib.parse
@@ -16,6 +19,10 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CERT_DIR = os.path.join(ROOT, "certs")
 CERT_FILE = os.path.join(CERT_DIR, "partylink.crt")
 KEY_FILE = os.path.join(CERT_DIR, "partylink.key")
+DB_FILE = os.environ.get("PARTYLINK_DB", os.path.join(ROOT, "partylink.db"))
+SESSION_COOKIE = "partylink_session"
+SESSION_TTL = 60 * 60 * 24 * 30
+HASH_ITERATIONS = 210000
 STATIC_FILES = {
     "/": "index.html",
     "/index.html": "index.html",
@@ -25,6 +32,7 @@ STATIC_FILES = {
 
 rooms = {}
 condition = threading.Condition()
+db_lock = threading.Lock()
 next_seq = 1
 
 
@@ -71,6 +79,109 @@ def cleanup_room(room_code):
     room = rooms.get(room_code)
     if room and not room["peers"]:
         rooms.pop(room_code, None)
+
+
+def db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    db_dir = os.path.dirname(DB_FILE)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    with db_lock, db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                display_name TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at)")
+
+
+def normalize_username(username):
+    return "".join(ch for ch in username.strip().lower() if ch.isalnum() or ch in {"_", "-"})
+
+
+def public_user(row):
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "displayName": row["display_name"],
+    }
+
+
+def hash_password(password, salt_hex=None):
+    salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, HASH_ITERATIONS)
+    return salt.hex(), digest.hex()
+
+
+def verify_password(password, salt_hex, expected_hex):
+    _, actual_hex = hash_password(password, salt_hex)
+    return hmac.compare_digest(actual_hex, expected_hex)
+
+
+def hash_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_session(user_id):
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with db_lock, db_connection() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (hash_token(token), user_id, now, now + SESSION_TTL),
+        )
+    return token
+
+
+def load_user_from_token(token):
+    if not token:
+        return None
+    now = time.time()
+    with db_lock, db_connection() as conn:
+        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+        row = conn.execute(
+            """
+            SELECT users.id, users.username, users.display_name
+            FROM sessions
+            JOIN users ON users.id = sessions.user_id
+            WHERE sessions.token_hash = ? AND sessions.expires_at >= ?
+            """,
+            (hash_token(token), now),
+        ).fetchone()
+    return row
+
+
+def delete_session(token):
+    if not token:
+        return
+    with db_lock, db_connection() as conn:
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
 
 
 def local_ipv4_addresses():
@@ -216,6 +327,66 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
+    def cookies(self):
+        result = {}
+        raw = self.headers.get("Cookie", "")
+        for item in raw.split(";"):
+            if "=" in item:
+                key, value = item.split("=", 1)
+                result[key.strip()] = urllib.parse.unquote(value.strip())
+        return result
+
+    def session_token(self):
+        return self.cookies().get(SESSION_COOKIE, "")
+
+    def current_user(self):
+        return load_user_from_token(self.session_token())
+
+    def require_user(self):
+        user = self.current_user()
+        if not user:
+            self.send_json(401, {"error": "请先登录账号"})
+            return None
+        return user
+
+    def set_session_cookie(self, token):
+        secure = self.request_origin().startswith("https://")
+        parts = [
+            f"{SESSION_COOKIE}={urllib.parse.quote(token)}",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            f"Max-Age={SESSION_TTL}",
+        ]
+        if secure:
+            parts.append("Secure")
+        self.send_header("Set-Cookie", "; ".join(parts))
+
+    def clear_session_cookie(self):
+        parts = [
+            f"{SESSION_COOKIE}=",
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Lax",
+            "Max-Age=0",
+        ]
+        if self.request_origin().startswith("https://"):
+            parts.append("Secure")
+        self.send_header("Set-Cookie", "; ".join(parts))
+
+    def send_auth_json(self, status, payload, token=None, clear_cookie=False):
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        if token:
+            self.set_session_cookie(token)
+        if clear_cookie:
+            self.clear_session_cookie()
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def request_origin(self):
         configured = os.environ.get("PARTYLINK_PUBLIC_URL", "").strip().rstrip("/")
         if configured:
@@ -238,6 +409,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/info":
             self.handle_info()
+            return
+        if parsed.path == "/api/me":
+            self.handle_me()
             return
 
         filename = STATIC_FILES.get(parsed.path)
@@ -263,7 +437,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         try:
-            if parsed.path == "/api/join":
+            if parsed.path == "/api/register":
+                self.handle_register()
+            elif parsed.path == "/api/login":
+                self.handle_login()
+            elif parsed.path == "/api/logout":
+                self.handle_logout()
+            elif parsed.path == "/api/join":
                 self.handle_join()
             elif parsed.path == "/api/send":
                 self.handle_send()
@@ -278,9 +458,74 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json(500, {"error": str(exc)})
 
-    def handle_join(self):
+    def handle_me(self):
+        self.send_json(200, {"user": public_user(self.current_user())})
+
+    def handle_register(self):
         data = self.read_json()
-        name = str(data.get("name", "")).strip()[:24] or "Player"
+        username = normalize_username(str(data.get("username", "")))
+        display_name = str(data.get("displayName", "")).strip()[:24] or username
+        password = str(data.get("password", ""))
+
+        if len(username) < 3:
+            self.send_json(400, {"error": "用户名至少需要 3 个字符，可用字母、数字、下划线或短横线"})
+            return
+        if len(password) < 8:
+            self.send_json(400, {"error": "密码至少需要 8 个字符"})
+            return
+        if len(display_name) < 1:
+            self.send_json(400, {"error": "显示名不能为空"})
+            return
+
+        salt_hex, password_hex = hash_password(password)
+        try:
+            with db_lock, db_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO users (username, display_name, password_salt, password_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (username, display_name, salt_hex, password_hex, time.time()),
+                )
+                user_id = cursor.lastrowid
+                user = conn.execute(
+                    "SELECT id, username, display_name FROM users WHERE id = ?",
+                    (user_id,),
+                ).fetchone()
+        except sqlite3.IntegrityError:
+            self.send_json(409, {"error": "这个用户名已经被注册"})
+            return
+
+        token = create_session(user["id"])
+        self.send_auth_json(200, {"user": public_user(user)}, token=token)
+
+    def handle_login(self):
+        data = self.read_json()
+        username = normalize_username(str(data.get("username", "")))
+        password = str(data.get("password", ""))
+        with db_lock, db_connection() as conn:
+            user = conn.execute(
+                "SELECT id, username, display_name, password_salt, password_hash FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+
+        if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
+            self.send_json(401, {"error": "用户名或密码不正确"})
+            return
+
+        token = create_session(user["id"])
+        self.send_auth_json(200, {"user": public_user(user)}, token=token)
+
+    def handle_logout(self):
+        delete_session(self.session_token())
+        self.send_auth_json(200, {"ok": True}, clear_cookie=True)
+
+    def handle_join(self):
+        user = self.require_user()
+        if not user:
+            return
+        data = self.read_json()
+        name = str(data.get("name", "")).strip()[:24] or user["display_name"]
         requested = str(data.get("room", "")).strip().upper()
         with condition:
             room_code = requested if requested else make_code()
@@ -305,6 +550,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"room": room_code, "clientId": client_id, "peers": peers})
 
     def handle_send(self):
+        if not self.require_user():
+            return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
         sender = str(data.get("from", ""))
@@ -328,6 +575,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
 
     def handle_state(self):
+        if not self.require_user():
+            return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
         client_id = str(data.get("clientId", ""))
@@ -344,6 +593,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"ok": True})
 
     def handle_leave(self):
+        if not self.require_user():
+            return
         data = self.read_json()
         room_code = str(data.get("room", "")).strip().upper()
         client_id = str(data.get("clientId", ""))
@@ -372,6 +623,8 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def handle_poll(self, parsed):
+        if not self.require_user():
+            return
         query = urllib.parse.parse_qs(parsed.query)
         room_code = query.get("room", [""])[0].strip().upper()
         client_id = query.get("clientId", [""])[0]
@@ -395,6 +648,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    init_db()
     port = int(os.environ.get("PORT", "8765"))
     hosts = local_ipv4_addresses()
     use_https = os.environ.get("PARTYLINK_HTTP", "").lower() not in {"1", "true", "yes"}

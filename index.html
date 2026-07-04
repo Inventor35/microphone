@@ -21,6 +21,39 @@
           </div>
         </div>
 
+        <form class="auth-panel" id="authForm">
+          <div class="mini-head">
+            <strong>账号登录</strong>
+            <span>保存你的开黑身份</span>
+          </div>
+          <label>
+            用户名
+            <input id="authUsername" maxlength="24" autocomplete="username" placeholder="例如 inventor35" />
+          </label>
+          <label>
+            显示名
+            <input id="authDisplayName" maxlength="24" autocomplete="nickname" placeholder="注册时填写" />
+          </label>
+          <label>
+            密码
+            <input id="authPassword" type="password" autocomplete="current-password" placeholder="至少 8 位" />
+          </label>
+          <div class="form-actions">
+            <button class="primary compact" id="loginBtn" type="submit">登录</button>
+            <button class="secondary" id="registerBtn" type="button">注册</button>
+          </div>
+          <p class="auth-message" id="authMessage"></p>
+        </form>
+
+        <div class="account-card" id="accountCard" hidden>
+          <div class="account-avatar" id="accountAvatar">你</div>
+          <div>
+            <strong id="accountName">Player</strong>
+            <span id="accountUsername">@player</span>
+          </div>
+          <button class="secondary small" id="logoutBtn" type="button">退出</button>
+        </div>
+
         <form class="join-panel" id="joinForm">
           <label>
             昵称

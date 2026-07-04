@@ -20,6 +20,18 @@ const outputVolume = document.querySelector("#outputVolume");
 const pttMode = document.querySelector("#pttMode");
 const roomMode = document.querySelector("#roomMode");
 const meterBars = Array.from(document.querySelectorAll(".meter span"));
+const authPanel = document.querySelector("#authPanel");
+const authForm = document.querySelector("#authForm");
+const authUsername = document.querySelector("#authUsername");
+const authDisplayName = document.querySelector("#authDisplayName");
+const authPassword = document.querySelector("#authPassword");
+const authMessage = document.querySelector("#authMessage");
+const registerBtn = document.querySelector("#registerBtn");
+const accountCard = document.querySelector("#accountCard");
+const accountAvatar = document.querySelector("#accountAvatar");
+const accountName = document.querySelector("#accountName");
+const accountUsername = document.querySelector("#accountUsername");
+const logoutBtn = document.querySelector("#logoutBtn");
 
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 const rtcConfig = {
@@ -50,6 +62,7 @@ let noiseGateFrame = 0;
 let noiseFloorDb = -64;
 let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
+let currentUser = null;
 const peers = new Map();
 
 const params = new URLSearchParams(window.location.search);
@@ -167,6 +180,106 @@ async function api(path, body) {
     throw new Error(data.error || "Request failed");
   }
   return data;
+}
+
+async function authRequest(path, body = {}) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "操作失败");
+  }
+  return data;
+}
+
+function setAuthMessage(text, mode = "") {
+  authMessage.textContent = text;
+  authMessage.className = `auth-message ${mode}`;
+}
+
+function setJoinLocked(locked) {
+  joinForm.classList.toggle("locked", locked);
+  nameInput.disabled = locked;
+  roomInput.disabled = locked;
+  joinForm.querySelector("button[type='submit']").disabled = locked;
+}
+
+function setCurrentUser(user) {
+  currentUser = user;
+  authPanel.hidden = Boolean(user);
+  accountCard.hidden = !user;
+  setJoinLocked(!user);
+
+  if (user) {
+    accountAvatar.textContent = initials(user.displayName);
+    accountAvatar.style.background = colorFor(String(user.id));
+    accountName.textContent = user.displayName;
+    accountUsername.textContent = `@${user.username}`;
+    if (!nameInput.value.trim()) {
+      nameInput.value = user.displayName;
+    }
+    localStorage.setItem("partylink:name", user.displayName);
+    setAuthMessage("");
+    connectionHint.textContent = "账号已登录，可以创建房间或加入朋友房间。";
+  } else {
+    accountName.textContent = "";
+    accountUsername.textContent = "";
+    connectionHint.textContent = "请先登录账号，再创建房间或加入朋友房间。";
+  }
+}
+
+async function loadCurrentUser() {
+  try {
+    const res = await fetch("/api/me");
+    const data = await res.json();
+    setCurrentUser(data.user);
+  } catch (error) {
+    setCurrentUser(null);
+  }
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  setAuthMessage("正在登录...");
+  try {
+    const data = await authRequest("/api/login", {
+      username: authUsername.value,
+      password: authPassword.value
+    });
+    authPassword.value = "";
+    setCurrentUser(data.user);
+    setAuthMessage("已登录", "ok");
+  } catch (error) {
+    setAuthMessage(error.message, "error");
+  }
+}
+
+async function submitRegister() {
+  setAuthMessage("正在注册...");
+  try {
+    const data = await authRequest("/api/register", {
+      username: authUsername.value,
+      displayName: authDisplayName.value,
+      password: authPassword.value
+    });
+    authPassword.value = "";
+    setCurrentUser(data.user);
+    setAuthMessage("注册成功", "ok");
+  } catch (error) {
+    setAuthMessage(error.message, "error");
+  }
+}
+
+async function logout() {
+  if (state.joined) {
+    await leaveRoom();
+  }
+  await authRequest("/api/logout").catch(() => {});
+  setCurrentUser(null);
+  setAuthMessage("已退出账号", "ok");
 }
 
 async function refreshInviteBaseUrl() {
@@ -495,6 +608,11 @@ async function poll() {
 async function joinRoom(event) {
   event.preventDefault();
   if (state.joined) return;
+  if (!currentUser) {
+    setAuthMessage("请先登录账号", "error");
+    setServerStatus("请先登录账号", "warn");
+    return;
+  }
 
   const name = nameInput.value.trim() || `Player-${Math.floor(Math.random() * 90 + 10)}`;
   localStorage.setItem("partylink:name", name);
@@ -604,6 +722,9 @@ async function publishState() {
 }
 
 joinForm.addEventListener("submit", joinRoom);
+authForm.addEventListener("submit", submitLogin);
+registerBtn.addEventListener("click", submitRegister);
+logoutBtn.addEventListener("click", logout);
 muteBtn.addEventListener("click", () => {
   state.muted = !state.muted;
   applyMuteState();
@@ -646,5 +767,7 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
+setCurrentUser(null);
+loadCurrentUser();
 refreshInviteBaseUrl();
 renderPeers();
