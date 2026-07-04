@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PartyLink</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="sidebar" aria-label="房间控制">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div>
+            <p>PartyLink</p>
+            <strong>开黑语音房</strong>
+          </div>
+        </div>
+
+        <form class="join-panel" id="joinForm">
+          <label>
+            昵称
+            <input id="nameInput" maxlength="24" autocomplete="nickname" placeholder="你的游戏名" />
+          </label>
+          <label>
+            房间码
+            <input id="roomInput" maxlength="8" autocomplete="off" placeholder="留空创建房间" />
+          </label>
+          <button class="primary" type="submit">
+            <span class="icon">+</span>
+            <span>进入语音房</span>
+          </button>
+        </form>
+
+        <div class="room-card" id="roomCard" hidden>
+          <div>
+            <span>当前房间</span>
+            <strong id="roomCode">-----</strong>
+          </div>
+          <button class="icon-button" id="copyInvite" type="button" title="复制邀请链接" aria-label="复制邀请链接">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8z"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+
+        <div class="status-list">
+          <div>
+            <span class="dot" id="serverDot"></span>
+            <span id="serverStatus">等待进入房间</span>
+          </div>
+          <div>
+            <span class="dot mic" id="micDot"></span>
+            <span id="micStatus">麦克风未开启</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="stage" aria-label="队友语音">
+        <header class="stage-header">
+          <div>
+            <p>Squad Voice</p>
+            <h1>边打边聊，不抢屏幕</h1>
+          </div>
+          <div class="meter" aria-label="本地音量">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+        </header>
+
+        <div class="game-frame">
+          <div class="hud top">
+            <span>队伍频道</span>
+            <strong id="liveCount">0 在线</strong>
+          </div>
+          <div class="reticle" aria-hidden="true"></div>
+          <div class="voice-stack" id="peerList"></div>
+          <div class="hud bottom">
+            <span id="connectionHint">创建房间后，邀请朋友打开链接加入。</span>
+          </div>
+        </div>
+
+        <div class="control-bar">
+          <button class="round" id="muteBtn" type="button" title="麦克风静音" aria-label="麦克风静音" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v4"/><path d="M8 22h8"/></svg>
+          </button>
+          <button class="round" id="deafenBtn" type="button" title="耳机静音" aria-label="耳机静音" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/><path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg>
+          </button>
+          <button class="round danger" id="leaveBtn" type="button" title="离开房间" aria-label="离开房间" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.78.59 2.63a2 2 0 0 1-.45 2.11L8 9.71a16 16 0 0 0 6.29 6.29l1.25-1.25a2 2 0 0 1 2.11-.45c.85.27 1.73.47 2.63.59A2 2 0 0 1 22 16.92z"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="队友与设置">
+        <div class="panel-head">
+          <h2>队友</h2>
+          <span id="roomMode">未连接</span>
+        </div>
+        <div class="member-list" id="memberList"></div>
+
+        <div class="settings">
+          <label class="toggle">
+            <input id="noiseToggle" type="checkbox" checked />
+            <span></span>
+            降噪
+          </label>
+          <label>
+            监听音量
+            <input id="outputVolume" type="range" min="0" max="100" value="85" />
+          </label>
+          <label>
+            按键说话
+            <select id="pttMode">
+              <option value="off">关闭</option>
+              <option value="space">空格按住说话</option>
+            </select>
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <template id="peerTemplate">
+      <article class="peer">
+        <div class="avatar"></div>
+        <div class="peer-main">
+          <strong></strong>
+          <span></span>
+        </div>
+        <div class="voice-ring" aria-hidden="true"></div>
+      </article>
+    </template>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,4 @@
+.git
+certs
+__pycache__
+.DS_Store

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: partylink
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: PARTYLINK_HTTP
+        value: "1"
+      - key: PYTHONUNBUFFERED
+        value: "1"
