@@ -1,6 +1,6 @@
 # PartyLink
 
-一个零依赖的开黑连麦小应用：Python 标准库提供房间和 WebRTC 信令，浏览器之间用 WebRTC 直连传语音。
+一个零依赖的开黑连麦小应用：Python 标准库提供房间和 WebRTC 信令，浏览器之间优先用 WebRTC 直连传语音，也可以配置 TURN 中继来支持不同网络下的稳定连麦。
 
 内置轻量账号系统：支持注册、登录、退出、添加好友和处理好友请求，密码使用 PBKDF2 哈希保存，登录态通过 HttpOnly Cookie 保存。
 
@@ -32,12 +32,39 @@ PARTYLINK_HTTP=1 python3 server.py
 
 ## 注意
 
-- 朋友必须和你在同一个 Wi-Fi/局域网，或者你需要做端口转发/公网部署。
+- 没有配置 TURN 时，不同网络/不同运营商之间可能无法直连语音；同一个 Wi-Fi/局域网通常更容易成功。
 - macOS 防火墙如果拦截 Python，需要允许传入连接。
 - 大多数浏览器不允许普通 HTTP 站点使用麦克风，所以给朋友用时请使用 `https://` 地址。
-- 如果要让远端朋友从互联网加入，建议把这个服务部署到带 HTTPS 的域名后面。公网连麦也可能需要 TURN 服务来穿透严格 NAT。
+- 如果要让远端朋友从互联网加入，建议把这个服务部署到带 HTTPS 的域名后面，并配置 TURN 服务来穿透严格 NAT。
 - 当前版本适合小队语音，采用 mesh 连接；人数建议 2 到 5 人。
 - 账号数据默认保存在 `partylink.db`。如果部署平台的文件系统会重置，账号也会随实例重建而丢失；需要长期保存账号时，把环境变量 `PARTYLINK_DB` 指向持久化磁盘路径。
+
+## TURN 与远程连麦
+
+WebRTC 会先尝试浏览器直连；当你和朋友不在同一个网络、路由器或运营商 NAT 比较严格时，直连可能失败。配置 TURN 后，声音会在直连失败时通过 TURN 中继转发。
+
+在 Render 的 Environment 里添加这些变量：
+
+```text
+PARTYLINK_TURN_URLS=turn:你的TURN地址:3478,turns:你的TURN地址:5349
+PARTYLINK_TURN_USERNAME=你的TURN用户名
+PARTYLINK_TURN_CREDENTIAL=你的TURN密码
+```
+
+可选变量：
+
+```text
+PARTYLINK_STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+PARTYLINK_ICE_TRANSPORT_POLICY=all
+```
+
+`PARTYLINK_ICE_TRANSPORT_POLICY=all` 会优先直连，失败时再用 TURN；如果你想测试 TURN 是否真的生效，可以临时改成 `relay` 强制所有语音走 TURN。
+
+TURN 用户名和密码必须发给浏览器才能建立 WebRTC 连接，所以生产环境更推荐使用支持临时凭证的 TURN 服务。小范围和朋友使用时，固定凭证也能工作，但要注意流量和费用。
+
+## 回声和噪音
+
+应用默认启用浏览器回声消除、噪声抑制，并在本地做高通/低通滤波、噪声门和动态压缩。为了减少对方听到回声，最好戴耳机；如果用外放，降低监听音量，并让扬声器远离麦克风。
 
 ## 正式 HTTPS 网站
 

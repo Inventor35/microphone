@@ -52,11 +52,12 @@ const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
 const CHAT_HISTORY_LIMIT = 100;
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
-const rtcConfig = {
+let rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" }
-  ]
+  ],
+  iceCandidatePoolSize: 4
 };
 
 let state = {
@@ -576,6 +577,7 @@ async function refreshInviteBaseUrl() {
     const res = await fetch("/api/info");
     if (!res.ok) return;
     const info = await res.json();
+    updateRtcConfig(info.rtcConfig);
     const host = window.location.hostname;
     const openedLocally = host === "127.0.0.1" || host === "localhost";
     if (openedLocally && info.lanUrls?.length) {
@@ -590,21 +592,39 @@ async function refreshInviteBaseUrl() {
   }
 }
 
+function updateRtcConfig(config) {
+  if (!config || !Array.isArray(config.iceServers) || !config.iceServers.length) return;
+  rtcConfig = {
+    iceServers: config.iceServers,
+    iceCandidatePoolSize: Number(config.iceCandidatePoolSize) || 4
+  };
+  if (["all", "relay"].includes(config.iceTransportPolicy)) {
+    rtcConfig.iceTransportPolicy = config.iceTransportPolicy;
+  }
+}
+
 async function startMic() {
   if (!window.isSecureContext) {
     throw new Error("浏览器需要 HTTPS 页面才能开启麦克风，请使用服务器打印的 https:// 邀请地址。");
   }
   const constraints = {
     audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: false },
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48000 },
+      sampleSize: { ideal: 16 },
+      latency: { ideal: 0.02 }
     },
     video: false
   };
   rawLocalStream = await navigator.mediaDevices.getUserMedia(constraints);
-  audioContext = new AudioContext();
+  try {
+    audioContext = new AudioContext({ latencyHint: "interactive" });
+  } catch (error) {
+    audioContext = new AudioContext();
+  }
   localStream = buildCleanMicStream(rawLocalStream);
   watchNoiseGate();
   watchLocalMeter();
@@ -619,18 +639,18 @@ function buildCleanMicStream(stream) {
   const destination = audioContext.createMediaStreamDestination();
 
   highpass.type = "highpass";
-  highpass.frequency.value = 120;
+  highpass.frequency.value = 145;
   highpass.Q.value = 0.7;
 
   lowpass.type = "lowpass";
-  lowpass.frequency.value = 7800;
+  lowpass.frequency.value = 6800;
   lowpass.Q.value = 0.7;
 
-  compressor.threshold.value = -34;
-  compressor.knee.value = 18;
-  compressor.ratio.value = 4;
-  compressor.attack.value = 0.004;
-  compressor.release.value = 0.18;
+  compressor.threshold.value = -30;
+  compressor.knee.value = 14;
+  compressor.ratio.value = 3.2;
+  compressor.attack.value = 0.003;
+  compressor.release.value = 0.14;
 
   noiseAnalyser = audioContext.createAnalyser();
   noiseAnalyser.fftSize = 1024;
@@ -641,10 +661,10 @@ function buildCleanMicStream(stream) {
 
   source.connect(highpass);
   highpass.connect(lowpass);
-  lowpass.connect(compressor);
-  compressor.connect(noiseAnalyser);
-  compressor.connect(noiseGateGain);
-  noiseGateGain.connect(localAnalyser);
+  lowpass.connect(noiseAnalyser);
+  lowpass.connect(noiseGateGain);
+  noiseGateGain.connect(compressor);
+  compressor.connect(localAnalyser);
   localAnalyser.connect(destination);
 
   return destination.stream;
@@ -669,16 +689,16 @@ function watchNoiseGate() {
     const db = dbFromTimeDomain(data);
     const strongNoiseReduction = noiseToggle.checked;
 
-    if (strongNoiseReduction && db < noiseFloorDb + 8) {
-      noiseFloorDb = noiseFloorDb * 0.985 + db * 0.015;
+    if (strongNoiseReduction && db < noiseFloorDb + 12) {
+      noiseFloorDb = noiseFloorDb * 0.99 + db * 0.01;
     }
 
-    const openDb = Math.max(-52, noiseFloorDb + 10);
-    const closeDb = openDb - 6;
+    const openDb = Math.max(-50, noiseFloorDb + 14);
+    const closeDb = openDb - 8;
     const currentlyOpen = noiseGateGain.gain.value > 0.3;
     const shouldOpen = !strongNoiseReduction || (currentlyOpen ? db > closeDb : db > openDb);
-    const targetGain = shouldOpen ? 1 : 0.035;
-    const timeConstant = shouldOpen ? 0.012 : 0.11;
+    const targetGain = shouldOpen ? 1 : 0.01;
+    const timeConstant = shouldOpen ? 0.009 : 0.16;
     noiseGateGain.gain.setTargetAtTime(targetGain, audioContext.currentTime, timeConstant);
     noiseGateFrame = requestAnimationFrame(tick);
   }
@@ -731,9 +751,10 @@ function applyNoiseConstraints() {
   if (!rawLocalStream) return;
   rawLocalStream.getAudioTracks().forEach((track) => {
     track.applyConstraints({
-      echoCancellation: true,
-      noiseSuppression: noiseToggle.checked,
-      autoGainControl: true
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: noiseToggle.checked },
+      autoGainControl: { ideal: false },
+      channelCount: { ideal: 1 }
     }).catch(() => {});
   });
 }
@@ -834,6 +855,21 @@ function createPeerConnection(peerId, polite) {
     current.connected = true;
     setupRemoteSpeaking(peerId, stream);
     applyOutputVolume();
+    audio.play().catch(() => {
+      if (!current.playBlocked) {
+        current.playBlocked = true;
+        connectionHint.textContent = "浏览器拦截了队友声音，点一下页面后再试。";
+      }
+    });
+    renderPeers();
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    current.iceState = pc.iceConnectionState;
+    if (["failed", "disconnected"].includes(pc.iceConnectionState)) {
+      setServerStatus("语音连接受阻", "warn");
+      connectionHint.textContent = "语音直连受阻。不同网络连麦需要配置 TURN 中继。";
+    }
     renderPeers();
   };
 

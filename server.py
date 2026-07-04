@@ -24,6 +24,7 @@ SESSION_COOKIE = "partylink_session"
 SESSION_TTL = 60 * 60 * 24 * 30
 HASH_ITERATIONS = 210000
 CHAT_HISTORY_LIMIT = 100
+DEFAULT_STUN_URLS = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
 ALLOWED_EMOJIS = {"😂", "🔥", "👍", "🎯", "💀", "👏", "❤️", "😮", "😎", "😭"}
 STATIC_FILES = {
     "/": "index.html",
@@ -82,6 +83,42 @@ def cleanup_room(room_code):
     room = rooms.get(room_code)
     if room and not room["peers"]:
         rooms.pop(room_code, None)
+
+
+def env_list(name, fallback=""):
+    raw = os.environ.get(name, fallback)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def rtc_config():
+    ice_servers = []
+    stun_urls = env_list("PARTYLINK_STUN_URLS", DEFAULT_STUN_URLS)
+    if stun_urls:
+        ice_servers.append({"urls": stun_urls})
+
+    turn_urls = env_list("PARTYLINK_TURN_URLS")
+    turn_username = os.environ.get("PARTYLINK_TURN_USERNAME", "").strip()
+    turn_credential = os.environ.get("PARTYLINK_TURN_CREDENTIAL", "").strip()
+    turn_configured = bool(turn_urls and turn_username and turn_credential)
+    if turn_configured:
+        ice_servers.append(
+            {
+                "urls": turn_urls,
+                "username": turn_username,
+                "credential": turn_credential,
+            }
+        )
+
+    policy = os.environ.get("PARTYLINK_ICE_TRANSPORT_POLICY", "all").strip().lower()
+    if policy not in {"all", "relay"}:
+        policy = "all"
+
+    return {
+        "iceServers": ice_servers,
+        "iceTransportPolicy": policy,
+        "iceCandidatePoolSize": 4,
+        "usingTurn": turn_configured,
+    }
 
 
 def db_connection():
@@ -969,6 +1006,7 @@ class Handler(BaseHTTPRequestHandler):
                 "publicUrl": origin,
                 "localUrl": f"{scheme}://127.0.0.1:{port}",
                 "lanUrls": [f"{scheme}://{host}:{port}" for host in hosts if not host.startswith("127.")],
+                "rtcConfig": rtc_config(),
             },
         )
 
