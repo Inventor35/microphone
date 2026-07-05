@@ -49,6 +49,8 @@ DATABASE_URL=你的 PostgreSQL 连接地址
 
 保存后重新部署，应用会自动建表，并把新注册账号、好友、公屏最近 100 条消息保存到 PostgreSQL。旧的临时 SQLite 账号一般无法自动迁移；配置好数据库后请重新注册一次账号。
 
+如果 `DATABASE_URL` 连不上，应用会先退回本地 SQLite 启动，避免整个网站部署失败；这时账号不会长期持久化。修好 `DATABASE_URL` 后重新部署即可恢复 PostgreSQL。
+
 本地开发不需要配置 `DATABASE_URL`，直接运行 `python3 server.py` 会继续使用项目目录里的 `partylink.db`。
 
 ## TURN 与远程连麦

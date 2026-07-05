@@ -38,6 +38,11 @@ STATIC_FILES = {
     "/assets/gaming-room-bg.jpg": os.path.join("assets", "gaming-room-bg.jpg"),
 }
 
+
+def db_fallback_disabled():
+    return os.environ.get("PARTYLINK_DB_FALLBACK", "1").strip().lower() in {"0", "false", "no"}
+
+
 rooms = {}
 condition = threading.Condition()
 db_lock = threading.Lock()
@@ -53,10 +58,14 @@ if DB_BACKEND == "postgres":
         import psycopg
         from psycopg.rows import dict_row as pg_dict_row
     except ImportError as exc:
-        raise RuntimeError(
-            "DATABASE_URL is set, but psycopg is not installed. Run `pip install -r requirements.txt`."
-        ) from exc
-    DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
+        if db_fallback_disabled():
+            raise RuntimeError(
+                "DATABASE_URL is set, but psycopg is not installed. Run `pip install -r requirements.txt`."
+            ) from exc
+        print(f"Could not load PostgreSQL driver; falling back to SQLite: {exc}", flush=True)
+        DB_BACKEND = "sqlite"
+    else:
+        DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
 
 
 def public_peer(peer):
@@ -238,7 +247,7 @@ def db_connection():
     return DbConnection()
 
 
-def init_db():
+def init_db_backend():
     if DB_BACKEND == "sqlite":
         db_dir = os.path.dirname(DB_FILE)
         if db_dir:
@@ -363,6 +372,20 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_user_b ON friendships(user_b_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_friendships_status ON friendships(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_room_messages_room_id ON room_messages(room_code, id)")
+
+
+def init_db():
+    global DB_BACKEND
+    try:
+        init_db_backend()
+        return
+    except Exception as exc:
+        if DB_BACKEND != "postgres" or db_fallback_disabled():
+            raise
+
+        print(f"Could not initialize PostgreSQL database; falling back to SQLite: {exc}", flush=True)
+        DB_BACKEND = "sqlite"
+        init_db_backend()
 
 
 def normalize_username(username):
