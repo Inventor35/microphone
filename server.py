@@ -12,6 +12,7 @@ import sqlite3
 import threading
 import time
 import urllib.parse
+import urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 
@@ -27,6 +28,7 @@ SESSION_TTL = 60 * 60 * 24 * 30
 HASH_ITERATIONS = 210000
 CHAT_HISTORY_LIMIT = 100
 DEFAULT_STUN_URLS = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
+TURN_REST_CACHE_TTL = 60 * 5
 ALLOWED_EMOJIS = {"😂", "🔥", "👍", "🎯", "💀", "👏", "❤️", "😮", "😎", "😭"}
 STATIC_FILES = {
     "/": "index.html",
@@ -39,6 +41,8 @@ STATIC_FILES = {
 rooms = {}
 condition = threading.Condition()
 db_lock = threading.Lock()
+turn_rest_lock = threading.Lock()
+turn_rest_cache = {"expiresAt": 0, "iceServers": []}
 next_seq = 1
 psycopg = None
 pg_dict_row = None
@@ -105,24 +109,85 @@ def env_list(name, fallback=""):
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def rtc_config():
-    ice_servers = []
-    stun_urls = env_list("PARTYLINK_STUN_URLS", DEFAULT_STUN_URLS)
-    if stun_urls:
-        ice_servers.append({"urls": stun_urls})
+def is_turn_server(server):
+    urls = server.get("urls", [])
+    if isinstance(urls, str):
+        urls = [urls]
+    return any(str(url).lower().startswith(("turn:", "turns:")) for url in urls)
 
-    turn_urls = env_list("PARTYLINK_TURN_URLS")
-    turn_username = os.environ.get("PARTYLINK_TURN_USERNAME", "").strip()
-    turn_credential = os.environ.get("PARTYLINK_TURN_CREDENTIAL", "").strip()
-    turn_configured = bool(turn_urls and turn_username and turn_credential)
-    if turn_configured:
-        ice_servers.append(
-            {
-                "urls": turn_urls,
-                "username": turn_username,
-                "credential": turn_credential,
-            }
+
+def normalized_ice_server(server):
+    if not isinstance(server, dict) or not server.get("urls"):
+        return None
+    result = {"urls": server["urls"]}
+    for key in ("username", "credential", "credentialType"):
+        if server.get(key):
+            result[key] = server[key]
+    return result
+
+
+def turn_rest_ice_servers():
+    rest_url = os.environ.get("PARTYLINK_TURN_REST_URL", "").strip()
+    if not rest_url:
+        return []
+
+    now = time.time()
+    with turn_rest_lock:
+        if turn_rest_cache["expiresAt"] > now:
+            return [dict(server) for server in turn_rest_cache["iceServers"]]
+
+    try:
+        request = urllib.request.Request(
+            rest_url,
+            headers={"Accept": "application/json", "User-Agent": "PartyLink/1.0"},
         )
+        with urllib.request.urlopen(request, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        print(f"Could not load TURN REST credentials: {exc}", flush=True)
+        return []
+
+    raw_servers = payload.get("iceServers") if isinstance(payload, dict) else payload
+    if not isinstance(raw_servers, list):
+        print("TURN REST response did not include an iceServers list.", flush=True)
+        return []
+
+    servers = []
+    for server in raw_servers:
+        normalized = normalized_ice_server(server)
+        if normalized:
+            servers.append(normalized)
+
+    with turn_rest_lock:
+        turn_rest_cache["expiresAt"] = now + TURN_REST_CACHE_TTL
+        turn_rest_cache["iceServers"] = servers
+
+    return [dict(server) for server in servers]
+
+
+def rtc_config():
+    rest_servers = turn_rest_ice_servers()
+    if rest_servers:
+        ice_servers = rest_servers
+        turn_configured = any(is_turn_server(server) for server in ice_servers)
+    else:
+        ice_servers = []
+        stun_urls = env_list("PARTYLINK_STUN_URLS", DEFAULT_STUN_URLS)
+        if stun_urls:
+            ice_servers.append({"urls": stun_urls})
+
+        turn_urls = env_list("PARTYLINK_TURN_URLS")
+        turn_username = os.environ.get("PARTYLINK_TURN_USERNAME", "").strip()
+        turn_credential = os.environ.get("PARTYLINK_TURN_CREDENTIAL", "").strip()
+        turn_configured = bool(turn_urls and turn_username and turn_credential)
+        if turn_configured:
+            ice_servers.append(
+                {
+                    "urls": turn_urls,
+                    "username": turn_username,
+                    "credential": turn_credential,
+                }
+            )
 
     policy = os.environ.get("PARTYLINK_ICE_TRANSPORT_POLICY", "all").strip().lower()
     if policy not in {"all", "relay"}:

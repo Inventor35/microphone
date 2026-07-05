@@ -55,7 +55,19 @@ DATABASE_URL=你的 PostgreSQL 连接地址
 
 WebRTC 会先尝试浏览器直连；当你和朋友不在同一个网络、路由器或运营商 NAT 比较严格时，直连可能失败。配置 TURN 后，声音会在直连失败时通过 TURN 中继转发。
 
-在 Render 的 Environment 里添加这些变量：
+很多 TURN 服务会提供一个 REST 接口来动态生成浏览器用的 TURN 凭证。比如 Metered/OpenRelay 注册后可以拿到类似这样的地址：
+
+```text
+https://你的app名.metered.live/api/v1/turn/credentials?apiKey=你的API_KEY
+```
+
+在 Render 的 Environment 里添加：
+
+```text
+PARTYLINK_TURN_REST_URL=上面这条完整地址
+```
+
+保存并重新部署后，应用会自动从这个地址获取 `iceServers`。如果你用的是直接给固定用户名和密码的 TURN 服务，也可以改用下面这些变量：
 
 ```text
 PARTYLINK_TURN_URLS=turn:你的TURN地址:3478,turns:你的TURN地址:5349

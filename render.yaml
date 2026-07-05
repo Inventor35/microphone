@@ -11,3 +11,5 @@ services:
         value: "1"
       - key: DATABASE_URL
         sync: false
+      - key: PARTYLINK_TURN_REST_URL
+        sync: false
