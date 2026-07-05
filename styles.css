@@ -798,12 +798,16 @@ h2 {
 }
 
 .chat-messages {
-  display: grid;
-  align-content: end;
+  display: flex;
+  flex-direction: column;
   gap: 5px;
   overflow-y: auto;
-  min-height: 58px;
-  padding-right: 3px;
+  min-height: 76px;
+  max-height: 118px;
+  padding-right: 5px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .chat-row {

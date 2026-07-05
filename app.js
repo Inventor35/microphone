@@ -156,7 +156,15 @@ function peerName(peerId, fallback = "队友") {
   return peers.get(peerId)?.name || fallback;
 }
 
-function renderChat() {
+function isChatAtBottom() {
+  return chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight <= 24;
+}
+
+function renderChat({ forceBottom = false } = {}) {
+  const wasEmpty = chatMessages.childElementCount === 0;
+  const shouldStayAtBottom = forceBottom || wasEmpty || isChatAtBottom();
+  const distanceFromBottom = chatMessages.scrollHeight - chatMessages.scrollTop;
+
   chatMessages.textContent = "";
   for (const item of chatItems.slice(-CHAT_HISTORY_LIMIT)) {
     const row = document.createElement("article");
@@ -172,7 +180,11 @@ function renderChat() {
     row.append(meta, body);
     chatMessages.appendChild(row);
   }
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+  if (shouldStayAtBottom) {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  } else {
+    chatMessages.scrollTop = Math.max(0, chatMessages.scrollHeight - distanceFromBottom);
+  }
 }
 
 function addChatItem(item) {
@@ -183,7 +195,7 @@ function addChatItem(item) {
   if (chatCollapsed && !item.mine) {
     unreadChatCount = Math.min(99, unreadChatCount + 1);
   }
-  renderChat();
+  renderChat({ forceBottom: item.mine });
   updateChatChrome();
 }
 
@@ -196,7 +208,7 @@ function loadChatHistory(history = []) {
     name: item.name || "队友",
     mine: Number(item.userId) === Number(currentUser?.id)
   }));
-  renderChat();
+  renderChat({ forceBottom: true });
   updateChatChrome();
 }
 
