@@ -1,8 +1,8 @@
 # PartyLink
 
-一个零依赖的开黑连麦小应用：Python 标准库提供房间和 WebRTC 信令，浏览器之间优先用 WebRTC 直连传语音，也可以配置 TURN 中继来支持不同网络下的稳定连麦。
+一个轻量的开黑连麦小应用：Python 提供房间和 WebRTC 信令，浏览器之间优先用 WebRTC 直连传语音，也可以配置 TURN 中继来支持不同网络下的稳定连麦。
 
-内置轻量账号系统：支持注册、登录、退出、添加好友和处理好友请求，密码使用 PBKDF2 哈希保存，登录态通过 HttpOnly Cookie 保存。
+内置轻量账号系统：支持注册、登录、退出、添加好友和处理好友请求，密码使用 PBKDF2 哈希保存，登录态通过 HttpOnly Cookie 保存。本地默认使用 SQLite；部署时如果配置 `DATABASE_URL`，会自动改用 PostgreSQL 持久化保存账号和聊天数据。
 
 公屏聊天会为每个房间保存最近 100 条文字和表情消息，新加入房间或刷新后会自动加载这些历史记录。
 
@@ -37,7 +37,19 @@ PARTYLINK_HTTP=1 python3 server.py
 - 大多数浏览器不允许普通 HTTP 站点使用麦克风，所以给朋友用时请使用 `https://` 地址。
 - 如果要让远端朋友从互联网加入，建议把这个服务部署到带 HTTPS 的域名后面，并配置 TURN 服务来穿透严格 NAT。
 - 当前版本适合小队语音，采用 mesh 连接；人数建议 2 到 5 人。
-- 账号数据默认保存在 `partylink.db`。如果部署平台的文件系统会重置，账号也会随实例重建而丢失；需要长期保存账号时，把环境变量 `PARTYLINK_DB` 指向持久化磁盘路径。
+- 账号数据本地默认保存在 `partylink.db`。如果部署平台的文件系统会重置，账号也会随实例重建而丢失；需要长期保存账号时，推荐设置 `DATABASE_URL` 使用外部 PostgreSQL 数据库，或者把环境变量 `PARTYLINK_DB` 指向持久化磁盘路径。
+
+## 免费持久化数据库
+
+Render 免费 Web Service 的本地文件不能可靠保存账号。想继续用免费 Web Service，可以创建一个外部 PostgreSQL 数据库，然后在 Render 的 Environment 里添加：
+
+```text
+DATABASE_URL=你的 PostgreSQL 连接地址
+```
+
+保存后重新部署，应用会自动建表，并把新注册账号、好友、公屏最近 100 条消息保存到 PostgreSQL。旧的临时 SQLite 账号一般无法自动迁移；配置好数据库后请重新注册一次账号。
+
+本地开发不需要配置 `DATABASE_URL`，直接运行 `python3 server.py` 会继续使用项目目录里的 `partylink.db`。
 
 ## TURN 与远程连麦
 
