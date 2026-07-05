@@ -88,6 +88,10 @@ let chatCollapsed = false;
 let unreadChatCount = 0;
 const peers = new Map();
 
+function audioLevelForVolume() {
+  return state.deafened ? 0 : Number(outputVolume.value) / 100;
+}
+
 const params = new URLSearchParams(window.location.search);
 if (params.get("room")) {
   roomInput.value = params.get("room").toUpperCase();
@@ -235,6 +239,11 @@ function removePeer(peerId) {
   if (record?.audio) {
     record.audio.remove();
   }
+  document.querySelectorAll("audio[data-peer-id]").forEach((audio) => {
+    if (audio.dataset.peerId === peerId) {
+      audio.remove();
+    }
+  });
   peers.delete(peerId);
   renderPeers();
 }
@@ -609,8 +618,8 @@ async function startMic() {
   }
   const constraints = {
     audio: {
-      echoCancellation: { ideal: true },
-      noiseSuppression: { ideal: true },
+      echoCancellation: true,
+      noiseSuppression: true,
       autoGainControl: { ideal: false },
       channelCount: { ideal: 1 },
       sampleRate: { ideal: 48000 },
@@ -751,8 +760,8 @@ function applyNoiseConstraints() {
   if (!rawLocalStream) return;
   rawLocalStream.getAudioTracks().forEach((track) => {
     track.applyConstraints({
-      echoCancellation: { ideal: true },
-      noiseSuppression: { ideal: noiseToggle.checked },
+      echoCancellation: true,
+      noiseSuppression: noiseToggle.checked,
       autoGainControl: { ideal: false },
       channelCount: { ideal: 1 }
     }).catch(() => {});
@@ -760,7 +769,7 @@ function applyNoiseConstraints() {
 }
 
 function applyOutputVolume() {
-  const volume = state.deafened ? 0 : Number(outputVolume.value) / 100;
+  const volume = audioLevelForVolume();
   for (const peer of peers.values()) {
     if (peer.audio) {
       peer.audio.volume = volume;
@@ -842,16 +851,29 @@ function createPeerConnection(peerId, polite) {
   };
 
   pc.ontrack = (event) => {
+    if (event.track.kind !== "audio" || peerId === state.clientId) return;
     const stream = event.streams[0];
+    if (!stream) return;
     let audio = current.audio;
     if (!audio) {
       audio = document.createElement("audio");
       audio.autoplay = true;
       audio.playsInline = true;
+      audio.controls = false;
+      audio.dataset.peerId = peerId;
       document.body.appendChild(audio);
       current.audio = audio;
     }
-    audio.srcObject = stream;
+    document.querySelectorAll("audio[data-peer-id]").forEach((node) => {
+      if (node !== audio && node.dataset.peerId === peerId) {
+        node.remove();
+      }
+    });
+    if (audio.srcObject !== stream) {
+      audio.srcObject = stream;
+    }
+    audio.volume = audioLevelForVolume();
+    audio.muted = state.deafened;
     current.connected = true;
     setupRemoteSpeaking(peerId, stream);
     applyOutputVolume();
@@ -951,7 +973,14 @@ async function poll() {
   while (state.joined && !state.pollAbort) {
     try {
       const res = await fetch(`/api/poll?room=${encodeURIComponent(state.room)}&clientId=${encodeURIComponent(state.clientId)}&after=${state.lastSeq}`);
-      if (!res.ok) throw new Error("Polling failed");
+      if (!res.ok) {
+        if (res.status === 403 || res.status === 404) {
+          const gone = new Error("Room connection was closed");
+          gone.name = "RoomGoneError";
+          throw gone;
+        }
+        throw new Error("Polling failed");
+      }
       const data = await res.json();
       for (const message of data.messages) {
         state.lastSeq = Math.max(state.lastSeq, message.seq);
@@ -972,6 +1001,10 @@ async function poll() {
       }
       setServerStatus("信令在线", "online");
     } catch (error) {
+      if (error.name === "RoomGoneError") {
+        await leaveRoom("这个账号已在其他窗口进入房间，旧连接已自动关闭。");
+        return;
+      }
       setServerStatus("正在重连信令", "warn");
       await new Promise((resolve) => setTimeout(resolve, 1200));
     }
@@ -1016,7 +1049,7 @@ async function joinRoom(event) {
     window.history.replaceState(null, "", `/?room=${encodeURIComponent(state.room)}`);
     await refreshInviteBaseUrl();
     setServerStatus("信令在线", "online");
-    connectionHint.textContent = "朋友加入后会自动连麦。复制邀请链接发给队友即可。";
+    connectionHint.textContent = "已默认开启按住空格说话，可以大幅减少回音；复制邀请链接发给队友即可。";
     muteBtn.disabled = false;
     deafenBtn.disabled = false;
     leaveBtn.disabled = false;
@@ -1042,7 +1075,7 @@ async function joinRoom(event) {
   }
 }
 
-async function leaveRoom() {
+async function leaveRoom(message = "创建房间后，邀请朋友打开链接加入。") {
   if (!state.joined) return;
   state.pollAbort = true;
   await api("/api/leave", { room: state.room, clientId: state.clientId }).catch(() => {});
@@ -1091,7 +1124,7 @@ async function leaveRoom() {
   renderChat();
   setServerStatus("已离开房间", "offline");
   setMicStatus("麦克风未开启", false);
-  connectionHint.textContent = "创建房间后，邀请朋友打开链接加入。";
+  connectionHint.textContent = message;
   loadFriends(true);
   window.history.replaceState(null, "", "/");
   renderPeers();
@@ -1126,7 +1159,7 @@ deafenBtn.addEventListener("click", () => {
   applyMuteState();
   publishState();
 });
-leaveBtn.addEventListener("click", leaveRoom);
+leaveBtn.addEventListener("click", () => leaveRoom());
 outputVolume.addEventListener("input", applyOutputVolume);
 pttMode.addEventListener("change", applyMuteState);
 noiseToggle.addEventListener("change", applyNoiseConstraints);

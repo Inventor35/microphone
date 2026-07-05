@@ -1071,6 +1071,15 @@ class Handler(BaseHTTPRequestHandler):
                 room_code = make_code()
 
             room = rooms.setdefault(room_code, {"peers": {}, "createdAt": time.time()})
+            replaced_peer_ids = [
+                peer_id
+                for peer_id, existing_peer in list(room["peers"].items())
+                if existing_peer.get("userId") == user["id"]
+            ]
+            for peer_id in replaced_peer_ids:
+                room["peers"].pop(peer_id, None)
+                broadcast(room_code, {"type": "peer-left", "from": peer_id})
+
             client_id = secrets.token_hex(8)
             peers = [public_peer(peer) for peer in room["peers"].values()]
             peer = {
