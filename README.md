@@ -81,10 +81,10 @@ PARTYLINK_TURN_CREDENTIAL=你的TURN密码
 
 ```text
 PARTYLINK_STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
-PARTYLINK_ICE_TRANSPORT_POLICY=all
+PARTYLINK_ICE_TRANSPORT_POLICY=relay
 ```
 
-`PARTYLINK_ICE_TRANSPORT_POLICY=all` 会优先直连，失败时再用 TURN；如果你想测试 TURN 是否真的生效，可以临时改成 `relay` 强制所有语音走 TURN。
+只要配置了 TURN，应用默认会用 `relay` 强制语音走 TURN 中继，这样不同网络下更稳。把 `PARTYLINK_ICE_TRANSPORT_POLICY` 改成 `all` 可以优先直连、失败时再尝试 TURN，但跨运营商或学校/公司网络可能更容易卡在连接中。
 
 TURN 用户名和密码必须发给浏览器才能建立 WebRTC 连接，所以生产环境更推荐使用支持临时凭证的 TURN 服务。小范围和朋友使用时，固定凭证也能工作，但要注意流量和费用。
 

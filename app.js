@@ -54,6 +54,7 @@ const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
 const CHAT_HISTORY_LIMIT = 100;
 const ROOM_INVITE_POLL_MS = 8000;
+const RTC_CONFIG_TTL_MS = 60000;
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 let rtcConfig = {
   iceServers: [
@@ -83,6 +84,7 @@ let noiseGateGain = null;
 let noiseGateFrame = 0;
 let noiseFloorDb = -64;
 let inviteBaseUrl = window.location.origin;
+let rtcConfigFetchedAt = 0;
 let pttHeld = false;
 let currentUser = null;
 let friendsState = { friends: [], incoming: [], outgoing: [] };
@@ -769,6 +771,7 @@ async function refreshInviteBaseUrl() {
     if (!res.ok) return;
     const info = await res.json();
     updateRtcConfig(info.rtcConfig);
+    rtcConfigFetchedAt = Date.now();
     const host = window.location.hostname;
     const openedLocally = host === "127.0.0.1" || host === "localhost";
     if (openedLocally && info.lanUrls?.length) {
@@ -780,6 +783,12 @@ async function refreshInviteBaseUrl() {
     }
   } catch (error) {
     inviteBaseUrl = window.location.origin;
+  }
+}
+
+async function ensureRtcConfigFresh() {
+  if (Date.now() - rtcConfigFetchedAt > RTC_CONFIG_TTL_MS) {
+    await refreshInviteBaseUrl();
   }
 }
 
@@ -1015,6 +1024,7 @@ function handleRoomEvent(message) {
 
 function createPeerConnection(peerId, polite) {
   const current = peers.get(peerId) || {};
+  current.pendingIce = current.pendingIce || [];
   if (current.pc) return current.pc;
 
   const pc = new RTCPeerConnection(rtcConfig);
@@ -1070,9 +1080,14 @@ function createPeerConnection(peerId, polite) {
 
   pc.oniceconnectionstatechange = () => {
     current.iceState = pc.iceConnectionState;
+    if (["connected", "completed"].includes(pc.iceConnectionState)) {
+      current.connected = true;
+      setServerStatus("语音已连接", "online");
+    }
     if (["failed", "disconnected"].includes(pc.iceConnectionState)) {
+      current.connected = false;
       setServerStatus("语音连接受阻", "warn");
-      connectionHint.textContent = "语音直连受阻。不同网络连麦需要配置 TURN 中继。";
+      connectionHint.textContent = "语音中继连接受阻，正在等待浏览器重新协商。";
     }
     renderPeers();
   };
@@ -1086,6 +1101,41 @@ function createPeerConnection(peerId, polite) {
   };
 
   return pc;
+}
+
+async function flushPendingIce(peerId) {
+  const record = peers.get(peerId);
+  const pc = record?.pc;
+  if (!pc?.remoteDescription?.type || !record.pendingIce?.length) return;
+
+  const candidates = record.pendingIce.splice(0);
+  for (const candidate of candidates) {
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      console.warn("Queued ICE candidate ignored", error);
+    }
+  }
+}
+
+async function addIceCandidateForPeer(peerId, payload) {
+  if (!payload) return;
+  const record = peers.get(peerId);
+  const pc = record?.pc;
+  if (!pc) return;
+
+  const candidate = new RTCIceCandidate(payload);
+  if (!pc.remoteDescription?.type) {
+    record.pendingIce = record.pendingIce || [];
+    record.pendingIce.push(candidate);
+    return;
+  }
+
+  try {
+    await pc.addIceCandidate(candidate);
+  } catch (error) {
+    console.warn("ICE candidate ignored", error);
+  }
 }
 
 function setupRemoteSpeaking(peerId, stream) {
@@ -1117,6 +1167,7 @@ function setupRemoteSpeaking(peerId, stream) {
 
 async function callPeer(peer) {
   upsertPeerRecord(peer);
+  await ensureRtcConfigFresh();
   const pc = createPeerConnection(peer.id, false);
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -1124,30 +1175,36 @@ async function callPeer(peer) {
 }
 
 async function handleSignal(message) {
-  const from = message.from;
-  if (!from || from === state.clientId) return;
+  try {
+    const from = message.from;
+    if (!from || from === state.clientId) return;
 
-  const record = peers.get(from) || { id: from, name: "队友" };
-  peers.set(from, record);
-  const pc = createPeerConnection(from, true);
-
-  if (message.type === "offer") {
-    await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await sendSignal(from, "answer", pc.localDescription);
-  }
-
-  if (message.type === "answer") {
-    await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
-  }
-
-  if (message.type === "ice") {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(message.payload));
-    } catch (error) {
-      console.warn("ICE candidate ignored", error);
+    const record = peers.get(from) || { id: from, name: "队友" };
+    peers.set(from, record);
+    if (!record.pc) {
+      await ensureRtcConfigFresh();
     }
+    const pc = createPeerConnection(from, true);
+
+    if (message.type === "offer") {
+      await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
+      await flushPendingIce(from);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await sendSignal(from, "answer", pc.localDescription);
+    }
+
+    if (message.type === "answer") {
+      await pc.setRemoteDescription(new RTCSessionDescription(message.payload));
+      await flushPendingIce(from);
+    }
+
+    if (message.type === "ice") {
+      await addIceCandidateForPeer(from, message.payload);
+    }
+  } catch (error) {
+    console.warn("Signal handling failed", error);
+    setServerStatus("语音协商重试中", "warn");
   }
 }
 

@@ -199,7 +199,8 @@ def rtc_config():
                 }
             )
 
-    policy = os.environ.get("PARTYLINK_ICE_TRANSPORT_POLICY", "all").strip().lower()
+    default_policy = "relay" if turn_configured else "all"
+    policy = os.environ.get("PARTYLINK_ICE_TRANSPORT_POLICY", default_policy).strip().lower()
     if policy not in {"all", "relay"}:
         policy = "all"
 
