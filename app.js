@@ -40,8 +40,10 @@ const friendUsername = document.querySelector("#friendUsername");
 const friendMessage = document.querySelector("#friendMessage");
 const friendCount = document.querySelector("#friendCount");
 const requestCount = document.querySelector("#requestCount");
+const roomInviteCount = document.querySelector("#roomInviteCount");
 const friendList = document.querySelector("#friendList");
 const friendRequestList = document.querySelector("#friendRequestList");
+const roomInviteList = document.querySelector("#roomInviteList");
 const chatMessages = document.querySelector("#chatMessages");
 const chatForm = document.querySelector("#chatForm");
 const chatInput = document.querySelector("#chatInput");
@@ -51,6 +53,7 @@ const emojiBurstLayer = document.querySelector("#emojiBurstLayer");
 const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
 const CHAT_HISTORY_LIMIT = 100;
+const ROOM_INVITE_POLL_MS = 8000;
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 let rtcConfig = {
   iceServers: [
@@ -83,6 +86,8 @@ let inviteBaseUrl = window.location.origin;
 let pttHeld = false;
 let currentUser = null;
 let friendsState = { friends: [], incoming: [], outgoing: [] };
+let roomInvitesState = [];
+let roomInvitePollTimer = 0;
 let chatItems = [];
 let chatCollapsed = false;
 let unreadChatCount = 0;
@@ -356,12 +361,17 @@ function emptyFriendRow(text) {
   return row;
 }
 
-function friendActionButton(label, action, friendshipId, tone = "") {
+function friendActionButton(label, action, friendshipId = "", tone = "", extraData = {}) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `friend-action ${tone}`;
   button.dataset.friendAction = action;
-  button.dataset.friendshipId = friendshipId;
+  if (friendshipId) {
+    button.dataset.friendshipId = friendshipId;
+  }
+  Object.entries(extraData).forEach(([key, value]) => {
+    button.dataset[key] = value;
+  });
   button.textContent = label;
   return button;
 }
@@ -390,13 +400,26 @@ function friendRow(user, statusText, actions = []) {
   return row;
 }
 
+function updateFriendSummary() {
+  const friends = friendsState.friends || [];
+  const incoming = friendsState.incoming || [];
+  const outgoing = friendsState.outgoing || [];
+  const pendingCount = incoming.length + outgoing.length;
+  const inviteCount = roomInvitesState.length;
+  const suffix = [
+    pendingCount ? `${pendingCount} 个请求` : "",
+    inviteCount ? `${inviteCount} 个邀请` : ""
+  ].filter(Boolean).join(" · ");
+  friendSummary.textContent = `${friends.length} 位好友${suffix ? ` · ${suffix}` : ""}`;
+}
+
 function renderFriends() {
   const friends = friendsState.friends || [];
   const incoming = friendsState.incoming || [];
   const outgoing = friendsState.outgoing || [];
   const pendingCount = incoming.length + outgoing.length;
 
-  friendSummary.textContent = `${friends.length} 位好友${pendingCount ? ` · ${pendingCount} 个请求` : ""}`;
+  updateFriendSummary();
   friendCount.textContent = String(friends.length);
   requestCount.textContent = String(pendingCount);
   friendList.textContent = "";
@@ -413,8 +436,12 @@ function renderFriends() {
   } else {
     friends.forEach((friend) => {
       const status = `@${friend.username} · ${friend.online ? "在线" : "离线"}`;
+      const inviteButton = friendActionButton("邀请", "invite-room", "", "ok", { friendId: friend.id });
+      inviteButton.disabled = !state.joined;
+      inviteButton.title = state.joined ? "邀请好友加入当前房间" : "进入房间后才能邀请好友";
       friendList.appendChild(
         friendRow(friend, status, [
+          inviteButton,
           friendActionButton("删除", "remove", friend.friendshipId, "danger")
         ])
       );
@@ -441,6 +468,38 @@ function renderFriends() {
   });
 }
 
+function renderRoomInvites() {
+  const invites = roomInvitesState || [];
+  updateFriendSummary();
+  roomInviteCount.textContent = String(invites.length);
+  roomInviteList.textContent = "";
+
+  if (!currentUser) {
+    roomInviteList.appendChild(emptyFriendRow("登录后显示邀请"));
+    return;
+  }
+
+  if (!invites.length) {
+    roomInviteList.appendChild(emptyFriendRow("暂无房间邀请"));
+    return;
+  }
+
+  invites.forEach((invite) => {
+    const inviter = {
+      id: invite.inviterId,
+      displayName: invite.inviterName || "好友",
+      username: invite.inviterUsername || "friend"
+    };
+    const status = `@${inviter.username} 邀你进 ${invite.room}`;
+    roomInviteList.appendChild(
+      friendRow(inviter, status, [
+        friendActionButton("加入", "accept-room-invite", "", "ok", { inviteId: invite.id }),
+        friendActionButton("忽略", "decline-room-invite", "", "", { inviteId: invite.id })
+      ])
+    );
+  });
+}
+
 async function loadFriends(silent = false) {
   if (!currentUser) {
     friendsState = { friends: [], incoming: [], outgoing: [] };
@@ -459,6 +518,46 @@ async function loadFriends(silent = false) {
   } catch (error) {
     setFriendMessage(error.message, "error");
   }
+}
+
+async function loadRoomInvites(silent = false) {
+  if (!currentUser) {
+    roomInvitesState = [];
+    renderRoomInvites();
+    return;
+  }
+  try {
+    const previousInviteIds = new Set(roomInvitesState.map((invite) => String(invite.id)));
+    const data = await getJson("/api/room-invites");
+    const nextInvites = data.invites || [];
+    const newInvite = nextInvites.find((invite) => !previousInviteIds.has(String(invite.id)));
+    roomInvitesState = nextInvites;
+    renderRoomInvites();
+    if (newInvite) {
+      connectionHint.textContent = `${newInvite.inviterName || "好友"} 邀请你加入 ${newInvite.room}，在左侧房间邀请里点加入。`;
+    }
+  } catch (error) {
+    if (!silent) {
+      setFriendMessage(error.message, "error");
+    }
+  }
+}
+
+function stopRoomInvitePolling() {
+  if (roomInvitePollTimer) {
+    clearInterval(roomInvitePollTimer);
+    roomInvitePollTimer = 0;
+  }
+}
+
+function startRoomInvitePolling() {
+  stopRoomInvitePolling();
+  loadRoomInvites(true);
+  roomInvitePollTimer = window.setInterval(() => {
+    if (currentUser) {
+      loadRoomInvites(true);
+    }
+  }, ROOM_INVITE_POLL_MS);
 }
 
 async function submitFriendRequest(event) {
@@ -498,10 +597,77 @@ async function runFriendAction(button) {
   }
 }
 
+async function inviteFriendToRoom(button) {
+  const friendId = Number(button.dataset.friendId);
+  if (!friendId) return;
+  if (!state.joined) {
+    setFriendMessage("先进入房间，再邀请好友", "error");
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const data = await authRequest("/api/room-invites/send", {
+      friendId,
+      room: state.room
+    });
+    setFriendMessage(data.message || "房间邀请已发送", "ok");
+    connectionHint.textContent = data.message || "房间邀请已发送。";
+  } catch (error) {
+    setFriendMessage(error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function joinRoomFromInvite(roomCode) {
+  if (!roomCode) return;
+  if (state.joined && state.room === roomCode) {
+    setFriendMessage("你已经在这个房间里了", "ok");
+    return;
+  }
+  if (state.joined) {
+    await leaveRoom("正在加入好友邀请的房间...");
+  }
+  roomInput.value = roomCode;
+  await joinRoom({ preventDefault() {} });
+}
+
+async function runRoomInviteAction(button) {
+  const inviteId = Number(button.dataset.inviteId);
+  if (!inviteId) return;
+  const accept = button.dataset.friendAction === "accept-room-invite";
+
+  button.disabled = true;
+  try {
+    const data = await authRequest("/api/room-invites/action", {
+      inviteId,
+      action: accept ? "accept" : "decline"
+    });
+    await loadRoomInvites(true);
+    if (accept) {
+      setFriendMessage("正在加入好友房间...", "ok");
+      await joinRoomFromInvite(data.room);
+    } else {
+      setFriendMessage(data.message || "已忽略邀请", "ok");
+    }
+  } catch (error) {
+    setFriendMessage(error.message, "error");
+    button.disabled = false;
+  }
+}
+
 function handleFriendActionClick(event) {
   const button = event.target.closest("[data-friend-action]");
   if (!button) return;
-  runFriendAction(button);
+  const action = button.dataset.friendAction;
+  if (action === "invite-room") {
+    inviteFriendToRoom(button);
+  } else if (action === "accept-room-invite" || action === "decline-room-invite") {
+    runRoomInviteAction(button);
+  } else {
+    runFriendAction(button);
+  }
 }
 
 function setJoinLocked(locked) {
@@ -531,12 +697,16 @@ function setCurrentUser(user) {
     setFriendMessage("");
     connectionHint.textContent = "账号已登录，可以创建房间或加入朋友房间。";
     loadFriends(true);
+    startRoomInvitePolling();
   } else {
+    stopRoomInvitePolling();
     accountName.textContent = "";
     accountUsername.textContent = "";
     friendUsername.value = "";
     friendsState = { friends: [], incoming: [], outgoing: [] };
+    roomInvitesState = [];
     renderFriends();
+    renderRoomInvites();
     setFriendMessage("");
     connectionHint.textContent = "请先登录账号，再创建房间或加入朋友房间。";
   }
@@ -1074,6 +1244,7 @@ async function joinRoom(event) {
     upsertPeerRecord(localPeer());
     applyMuteState();
     applyOutputVolume();
+    renderFriends();
     loadFriends(true);
     poll();
 
@@ -1137,6 +1308,7 @@ async function leaveRoom(message = "创建房间后，邀请朋友打开链接�
   setServerStatus("已离开房间", "offline");
   setMicStatus("麦克风未开启", false);
   connectionHint.textContent = message;
+  renderFriends();
   loadFriends(true);
   window.history.replaceState(null, "", "/");
   renderPeers();
@@ -1157,9 +1329,13 @@ authForm.addEventListener("submit", submitLogin);
 registerBtn.addEventListener("click", submitRegister);
 logoutBtn.addEventListener("click", logout);
 friendForm.addEventListener("submit", submitFriendRequest);
-friendRefreshBtn.addEventListener("click", () => loadFriends());
+friendRefreshBtn.addEventListener("click", () => {
+  loadFriends();
+  loadRoomInvites();
+});
 friendList.addEventListener("click", handleFriendActionClick);
 friendRequestList.addEventListener("click", handleFriendActionClick);
+roomInviteList.addEventListener("click", handleFriendActionClick);
 muteBtn.addEventListener("click", () => {
   state.muted = !state.muted;
   applyMuteState();
@@ -1204,6 +1380,7 @@ window.addEventListener("keyup", (event) => {
 window.addEventListener("focus", () => {
   if (currentUser) {
     loadFriends(true);
+    loadRoomInvites(true);
   }
 });
 
@@ -1221,3 +1398,4 @@ refreshInviteBaseUrl();
 renderPeers();
 renderChat();
 renderFriends();
+renderRoomInvites();
