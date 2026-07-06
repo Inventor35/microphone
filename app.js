@@ -54,6 +54,7 @@ const emojiButtons = Array.from(document.querySelectorAll("[data-emoji]"));
 
 const CHAT_HISTORY_LIMIT = 100;
 const ROOM_INVITE_POLL_MS = 8000;
+const PRESENCE_HEARTBEAT_MS = 25000;
 const RTC_CONFIG_TTL_MS = 60000;
 const palette = ["#42d392", "#48a7ff", "#ff5b8f", "#f5c15c", "#9b7cff", "#ff8a5b"];
 let rtcConfig = {
@@ -90,6 +91,7 @@ let currentUser = null;
 let friendsState = { friends: [], incoming: [], outgoing: [] };
 let roomInvitesState = [];
 let roomInvitePollTimer = 0;
+let presenceHeartbeatTimer = 0;
 let chatItems = [];
 let chatCollapsed = false;
 let unreadChatCount = 0;
@@ -562,6 +564,24 @@ function startRoomInvitePolling() {
   }, ROOM_INVITE_POLL_MS);
 }
 
+async function sendPresenceHeartbeat() {
+  if (!currentUser) return;
+  await authRequest("/api/presence").catch(() => {});
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceHeartbeatTimer) {
+    clearInterval(presenceHeartbeatTimer);
+    presenceHeartbeatTimer = 0;
+  }
+}
+
+function startPresenceHeartbeat() {
+  stopPresenceHeartbeat();
+  sendPresenceHeartbeat();
+  presenceHeartbeatTimer = window.setInterval(sendPresenceHeartbeat, PRESENCE_HEARTBEAT_MS);
+}
+
 async function submitFriendRequest(event) {
   event.preventDefault();
   if (!currentUser) {
@@ -698,9 +718,11 @@ function setCurrentUser(user) {
     setAuthMessage("");
     setFriendMessage("");
     connectionHint.textContent = "账号已登录，可以创建房间或加入朋友房间。";
+    startPresenceHeartbeat();
     loadFriends(true);
     startRoomInvitePolling();
   } else {
+    stopPresenceHeartbeat();
     stopRoomInvitePolling();
     accountName.textContent = "";
     accountUsername.textContent = "";
@@ -1436,8 +1458,16 @@ window.addEventListener("keyup", (event) => {
 
 window.addEventListener("focus", () => {
   if (currentUser) {
+    sendPresenceHeartbeat();
     loadFriends(true);
     loadRoomInvites(true);
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && currentUser) {
+    sendPresenceHeartbeat();
+    loadFriends(true);
   }
 });
 

@@ -28,6 +28,7 @@ SESSION_TTL = 60 * 60 * 24 * 30
 HASH_ITERATIONS = 210000
 CHAT_HISTORY_LIMIT = 100
 ROOM_INVITE_TTL = 60 * 60 * 6
+PRESENCE_TTL = 90
 DEFAULT_STUN_URLS = "stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302"
 TURN_REST_CACHE_TTL = 60 * 5
 ALLOWED_EMOJIS = {"😂", "🔥", "👍", "🎯", "💀", "👏", "❤️", "😮", "😎", "😭"}
@@ -47,8 +48,10 @@ def db_fallback_disabled():
 rooms = {}
 condition = threading.Condition()
 db_lock = threading.Lock()
+presence_lock = threading.Lock()
 turn_rest_lock = threading.Lock()
 turn_rest_cache = {"expiresAt": 0, "iceServers": []}
+session_presence = {}
 next_seq = 1
 psycopg = None
 pg_dict_row = None
@@ -489,18 +492,49 @@ def delete_session(token):
         conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
 
 
+def mark_session_seen(token, user_id):
+    if not token or not user_id:
+        return
+    with presence_lock:
+        session_presence[hash_token(token)] = {"userId": user_id, "seenAt": time.time()}
+
+
+def mark_session_offline(token):
+    if not token:
+        return
+    with presence_lock:
+        session_presence.pop(hash_token(token), None)
+
+
 def friendship_pair(first_id, second_id):
     return (first_id, second_id) if first_id < second_id else (second_id, first_id)
 
 
 def online_user_ids():
+    now = time.time()
+    active_session_user_ids = set()
+    with presence_lock:
+        stale_tokens = [
+            token_hash
+            for token_hash, presence in session_presence.items()
+            if now - presence["seenAt"] > PRESENCE_TTL
+        ]
+        for token_hash in stale_tokens:
+            session_presence.pop(token_hash, None)
+        active_session_user_ids = {
+            presence["userId"]
+            for presence in session_presence.values()
+            if now - presence["seenAt"] <= PRESENCE_TTL
+        }
+
     with condition:
-        return {
+        room_user_ids = {
             peer.get("userId")
             for room in rooms.values()
             for peer in room["peers"].values()
             if peer.get("userId")
         }
+    return active_session_user_ids | room_user_ids
 
 
 def friend_user_from_row(row, user_id, online_ids):
@@ -841,6 +875,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             self.send_json(401, {"error": "请先登录账号"})
             return None
+        mark_session_seen(self.session_token(), user["id"])
         return user
 
     def set_session_cookie(self, token):
@@ -943,6 +978,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_login()
             elif parsed.path == "/api/logout":
                 self.handle_logout()
+            elif parsed.path == "/api/presence":
+                self.handle_presence()
             elif parsed.path == "/api/friends/request":
                 self.handle_friend_request()
             elif parsed.path == "/api/friends/action":
@@ -967,7 +1004,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": str(exc)})
 
     def handle_me(self):
-        self.send_json(200, {"user": public_user(self.current_user())})
+        user = self.current_user()
+        if user:
+            mark_session_seen(self.session_token(), user["id"])
+        self.send_json(200, {"user": public_user(user)})
+
+    def handle_presence(self):
+        user = self.require_user()
+        if not user:
+            return
+        self.send_json(200, {"ok": True})
 
     def handle_friends(self):
         user = self.require_user()
@@ -1037,7 +1083,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_auth_json(200, {"user": public_user(user)}, token=token)
 
     def handle_logout(self):
-        delete_session(self.session_token())
+        token = self.session_token()
+        mark_session_offline(token)
+        delete_session(token)
         self.send_auth_json(200, {"ok": True}, clear_cookie=True)
 
     def handle_friend_request(self):
